@@ -15,7 +15,8 @@ import (
 
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
-// refererFor 返回平台 CDN 要求的 Referer；缺了会被 403。
+// refererFor returns the Referer required by each platform's CDN; requests
+// without it get a 403.
 func refererFor(platform string) string {
 	if platform == platformTikTok {
 		return "https://www.tiktok.com/"
@@ -23,15 +24,15 @@ func refererFor(platform string) string {
 	return "https://www.douyin.com/"
 }
 
-// runDownload 执行 download 子命令。
+// runDownload executes the download subcommand.
 func runDownload(args []string) int {
 	o, pos, err := parseOptions(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "参数错误:", err)
+		fmt.Fprintln(os.Stderr, "argument error:", err)
 		return 2
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(os.Stderr, "用法: vidpuller download <timeline-url|file> [参数]")
+		fmt.Fprintln(os.Stderr, "usage: vidpuller download <timeline-url|file> [options]")
 		return 2
 	}
 	if o.progress {
@@ -40,38 +41,38 @@ func runDownload(args []string) int {
 	if o.cookies != "" {
 		cks, err := loadCookieFile(o.cookies)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "读取 cookie 失败:", err)
+			fmt.Fprintln(os.Stderr, "read cookies:", err)
 			return 2
 		}
 		sessionCookies = cks
 	}
 	tl, err := loadTimeline(pos[0])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "读取时间线失败:", err)
+		fmt.Fprintln(os.Stderr, "load timeline:", err)
 		return 1
 	}
 	platform := detectPlatform(tl, pos[0], o.platform)
 	if platform == "" {
-		fmt.Fprintln(os.Stderr, "无法判断平台：请在时间线顶层提供 source 或 platform（douyin|tiktok|bilibili），或在条目里逐条提供 platform，或用 --platform 指定")
+		fmt.Fprintln(os.Stderr, "cannot determine platform: set source or platform at the top level (douyin|tiktok|bilibili), set platform per item, or pass --platform")
 		return 2
 	}
 	items := selectItems(tl, o)
 	if len(items) == 0 {
-		fmt.Println("没有符合条件的条目")
+		fmt.Println("no matching items")
 		return 0
 	}
 	label := platformLabel(tl, items, pos[0], o.platform)
 
 	st := loadState(filepath.Join(o.out, stateFile))
 	if o.dryRun {
-		fmt.Printf("[%s] %s — 共 %d 条待检查\n", label, displayAuthor(tl), len(items))
+		fmt.Printf("[%s] %s — %d item(s) to check\n", label, displayAuthor(tl), len(items))
 		for _, it := range items {
 			p := platformForItem(tl, it, pos[0], o.platform)
-			status := "将下载"
+			status := "would download"
 			if p == "" {
-				status = "平台未知"
+				status = "platform unknown"
 			} else if !o.force && st.has(p, it.AwemeID) {
-				status = "已下载，跳过"
+				status = "already downloaded, skip"
 			}
 			fmt.Printf("  %s  %s  %s\n", it.AwemeID, formatDate(it.CreateTime), status)
 		}
@@ -83,7 +84,7 @@ func runDownload(args []string) int {
 	for i, it := range items {
 		p := platformForItem(tl, it, pos[0], o.platform)
 		if p == "" {
-			fmt.Printf("  [跳过] %s 无法判断平台（请在条目里提供 platform 或用 --platform 指定）\n", it.AwemeID)
+			fmt.Printf("  [skip] %s: cannot determine platform (set item.platform or --platform)\n", it.AwemeID)
 			failCount++
 			continue
 		}
@@ -92,17 +93,18 @@ func runDownload(args []string) int {
 			continue
 		}
 		if it.PlayURL == "" && p != platformBilibili {
-			fmt.Printf("  [跳过] %s 没有视频直链（图文帖？）\n", it.AwemeID)
+			fmt.Printf("  [skip] %s: no video URL (image post?)\n", it.AwemeID)
 			failCount++
 			continue
 		}
 		fmt.Printf("[%d/%d] %s  %s\n", i+1, len(items), it.AwemeID, truncate(it.Desc, 50))
 		var client *http.Client
 		if p == platformTikTok {
-			// 用当前会话重新签发直链：上游的 URL 绑定它自己的 cookie。
+			// Re-resolve the play URL with the current session: the URL from
+			// upstream is tied to its own cookies.
 			det, c, rerr := resolveTikTokPlayURL(sessions[it.Author], it.Author, it.AwemeID)
 			if rerr != nil {
-				fmt.Printf("  警告: 重新解析直链失败（%v），改用时间线里的地址\n", rerr)
+				fmt.Printf("  warning: re-resolving URL failed (%v); using timeline URL\n", rerr)
 				if sessions[it.Author] == nil {
 					c, _ = tiktokSessionFor(it.Author)
 				}
@@ -128,32 +130,33 @@ func runDownload(args []string) int {
 		res, err := downloadItem(it, p, o.out, client)
 		quality := ""
 		if res.Quality != "" {
-			quality = "，" + res.Quality
+			quality = ", " + res.Quality
 		}
 		if err != nil {
-			fmt.Printf("  失败: %v\n", err)
+			fmt.Printf("  failed: %v\n", err)
 			failCount++
 			continue
 		}
 		st.mark(p, it, res.Video)
 		if err := st.save(filepath.Join(o.out, stateFile)); err != nil {
-			fmt.Printf("  警告: 写入增量账本失败: %v\n", err)
+			fmt.Printf("  warning: save state: %v\n", err)
 		}
-		fmt.Printf("  完成 %s（%s%s）\n", res.Video, humanBytes(res.Bytes), quality)
+		fmt.Printf("  done %s (%s%s)\n", res.Video, humanBytes(res.Bytes), quality)
 		okCount++
 		if o.interval > 0 && i < len(items)-1 {
 			time.Sleep(o.interval)
 		}
 	}
 
-	fmt.Printf("\n完成 %d 条，跳过 %d 条，失败 %d 条\n", okCount, skipCount, failCount)
+	fmt.Printf("\ndone %d, skipped %d, failed %d\n", okCount, skipCount, failCount)
 	if failCount > 0 {
 		return 1
 	}
 	return 0
 }
 
-// platformLabel 给列表/摘要用的平台标签：单一平台返回名字，混合返回 mixed。
+// platformLabel is the platform label for lists and summaries: a single
+// platform name, or "mixed".
 func platformLabel(tl *Timeline, items []Item, src, override string) string {
 	seen := map[string]bool{}
 	for _, it := range items {
@@ -172,25 +175,25 @@ func platformLabel(tl *Timeline, items []Item, src, override string) string {
 	return "mixed"
 }
 
-// runList 执行 list 子命令：只打印，不下载。
+// runList executes the list subcommand: print only, never download.
 func runList(args []string) int {
 	o, pos, err := parseOptions(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "参数错误:", err)
+		fmt.Fprintln(os.Stderr, "argument error:", err)
 		return 2
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(os.Stderr, "用法: vidpuller list <timeline-url|file> [参数]")
+		fmt.Fprintln(os.Stderr, "usage: vidpuller list <timeline-url|file> [options]")
 		return 2
 	}
 	tl, err := loadTimeline(pos[0])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "读取时间线失败:", err)
+		fmt.Fprintln(os.Stderr, "load timeline:", err)
 		return 1
 	}
 	items := selectItems(tl, o)
 	label := platformLabel(tl, items, pos[0], o.platform)
-	fmt.Printf("[%s] %s — %d 条\n", label, displayAuthor(tl), len(items))
+	fmt.Printf("[%s] %s — %d item(s)\n", label, displayAuthor(tl), len(items))
 	mixed := label == "mixed"
 	for _, it := range items {
 		if mixed {
@@ -208,7 +211,7 @@ func runList(args []string) int {
 	return 0
 }
 
-// downloadResult 是一次下载落盘的文件。
+// downloadResult describes the files written by one download.
 type downloadResult struct {
 	Video   string
 	Cover   string
@@ -217,7 +220,8 @@ type downloadResult struct {
 	Quality string
 }
 
-// downloadItem 下载视频、封面和元数据到 <out>/<platform>/<author>/。
+// downloadItem writes the video, cover, and metadata under
+// <out>/<platform>/<author>/.
 func downloadItem(it Item, platform, outRoot string, client *http.Client) (downloadResult, error) {
 	if platform == platformBilibili {
 		return downloadBilibiliItem(it, outRoot, sessionCookies)
@@ -236,13 +240,13 @@ func downloadItem(it Item, platform, outRoot string, client *http.Client) (downl
 
 	n, err := downloadFile(it.PlayURL, res.Video, refererFor(platform), client)
 	if err != nil {
-		return res, fmt.Errorf("视频: %w", err)
+		return res, fmt.Errorf("video: %w", err)
 	}
 	res.Bytes = n
 
 	if it.CoverURL != "" {
 		if _, err := downloadFile(it.CoverURL, res.Cover, refererFor(platform), client); err != nil {
-			fmt.Printf("  警告: 封面下载失败: %v\n", err)
+			fmt.Printf("  warning: cover download failed: %v\n", err)
 			res.Cover = ""
 		}
 	}
@@ -261,19 +265,20 @@ func downloadItem(it Item, platform, outRoot string, client *http.Client) (downl
 		return res, err
 	}
 	if err := os.WriteFile(res.Meta, data, 0o644); err != nil {
-		return res, fmt.Errorf("元数据: %w", err)
+		return res, fmt.Errorf("metadata: %w", err)
 	}
 	return res, nil
 }
 
-// reportProgress 是全局进度回调（--progress 时设置），值域 0..1。
-// 进度行走 stderr，格式固定为 "PROGRESS <0-100>"，供调用方解析。
+// reportProgress is the global progress callback (set by --progress), with
+// values in 0..1. Progress lines go to stderr as "PROGRESS <0-100>" so
+// callers can parse them.
 var reportProgress func(float64)
 
 var lastProgressAt time.Time
 var lastProgressPct = -1.0
 
-// emitProgress 节流后回调：至少 1% 或 200ms 才输出一次。
+// emitProgress throttles callbacks to at least 1% or 200ms apart.
 func emitProgress(f float64) {
 	if reportProgress == nil {
 		return
@@ -293,7 +298,8 @@ func emitProgress(f float64) {
 	reportProgress(f)
 }
 
-// progressRange 把单个文件的 0..1 进度映射到总进度的一段（B 站视频/音频分段）。
+// progressRange maps one file's 0..1 progress onto a slice of the total
+// progress (Bilibili downloads video and audio separately).
 type progressRange struct{ base, span float64 }
 
 type progressWriter struct {
@@ -313,10 +319,11 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// downloadFile 下载直链到 dest（先写 .part 再改名，避免半成品）。
+// downloadFile downloads a direct URL to dest. It writes a .part file first
+// and renames it on success, so a partial file never looks complete.
 func downloadFile(url, dest, referer string, client *http.Client, rng ...progressRange) (int64, error) {
 	if url == "" {
-		return 0, fmt.Errorf("空下载地址")
+		return 0, fmt.Errorf("empty download URL")
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return 0, err
@@ -369,7 +376,7 @@ func downloadFile(url, dest, referer string, client *http.Client, rng ...progres
 	}
 	if resp.ContentLength > 0 && n != resp.ContentLength {
 		_ = os.Remove(tmp)
-		return n, fmt.Errorf("长度不符: 收到 %d / 期望 %d", n, resp.ContentLength)
+		return n, fmt.Errorf("size mismatch: got %d, want %d", n, resp.ContentLength)
 	}
 	if err := os.Rename(tmp, dest); err != nil {
 		return n, err
@@ -377,12 +384,12 @@ func downloadFile(url, dest, referer string, client *http.Client, rng ...progres
 	return n, nil
 }
 
-// safeName 把标题变成安全的文件名片段。
+// safeName turns a title into a safe filename fragment.
 func safeName(s string) string {
 	s = strings.TrimSpace(s)
 	repl := strings.NewReplacer(
-		"/", "_", "\\", "_", ":", "：", "*", "_", "?", "？",
-		"\"", "'", "<", "《", ">", "》", "|", "_", "\n", " ", "\r", " ",
+		"/", "_", "\\", "_", ":", "_", "*", "_", "?", "_",
+		"\"", "_", "<", "_", ">", "_", "|", "_", "\n", " ", "\r", " ",
 		"\t", " ", "\x00", "",
 	)
 	s = repl.Replace(s)

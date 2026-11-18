@@ -17,10 +17,12 @@ import (
 	"time"
 )
 
-// B 站下载：view 拿 cid → playurl 拿 DASH 流 → 下载音视频 → ffmpeg 合并。
+// Bilibili download flow: view gives the cid, playurl gives DASH streams,
+// then both streams are downloaded and merged with ffmpeg.
 //
-// 实测（2026-11）：playurl 的 plain 接口不需要 WBI 签名；未登录最高 480p，
-// 带 SESSDATA（--cookies）可拿 1080p/更高，最高档位由账号权限决定。
+// Measured in 2026-11: the plain playurl endpoint needs no WBI signature;
+// anonymous access tops out at 480p, while SESSDATA (--cookies) unlocks
+// 1080p and higher depending on account permissions.
 const (
 	platformBilibili = "bilibili"
 	biliReferer      = "https://www.bilibili.com/"
@@ -90,11 +92,12 @@ func biliClient(cookies []*http.Cookie) *http.Client {
 	return client
 }
 
-// biliEnsureBuvid 给客户端刷新游客指纹（buvid3/buvid4），显著降低 412 概率。
-// 每次调用都重新取，避免沿用 cookie 文件里的过期指纹。
+// biliEnsureBuvid refreshes the anonymous fingerprint cookies (buvid3/buvid4)
+// to significantly reduce 412 responses. It fetches fresh values on every
+// call, avoiding expired fingerprints from a cookie file.
 func biliEnsureBuvid(client *http.Client) {
 	base, _ := url.Parse("https://www.bilibili.com")
-	// 先清掉旧指纹
+	// Clear old fingerprints first.
 	if old := client.Jar.Cookies(base); len(old) > 0 {
 		reset := make([]*http.Cookie, 0, 2)
 		for _, c := range old {
@@ -152,7 +155,7 @@ func biliGetJSON(client *http.Client, target, referer string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode == http.StatusPreconditionFailed {
-		return nil, fmt.Errorf("B 站风控拦截（HTTP 412），稍后重试或带 --cookies")
+		return nil, fmt.Errorf("Bilibili risk control blocked the request (HTTP 412); retry later or pass --cookies")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(body), 120))
@@ -160,7 +163,8 @@ func biliGetJSON(client *http.Client, target, referer string) ([]byte, error) {
 	return body, nil
 }
 
-// biliAPIResult 是 B 站通用响应外壳（code != 0 时 error 在 message 里）。
+// biliAPIResult is Bilibili's common response envelope (a non-zero code puts
+// the error in message).
 type biliAPIResult struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
@@ -186,19 +190,20 @@ func biliAPI(client *http.Client, target, referer string) (json.RawMessage, erro
 	}
 	var res biliAPIResult
 	if err := json.Unmarshal(body, &res); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	if res.Code != 0 {
-		return nil, fmt.Errorf("B 站接口错误 %d: %s", res.Code, res.Message)
+		return nil, fmt.Errorf("Bilibili API error %d: %s", res.Code, res.Message)
 	}
 	return res.Data, nil
 }
 
-// extractBVID 从视频链接/短链里取 BVID，顺带解析 ?p= 分P。
+// extractBVID extracts a BVID from a video URL or short link and parses the
+// ?p= page number.
 func extractBVID(target string) (bvid string, part int) {
 	part = 1
 	target = strings.TrimSpace(target)
-	// b23.tv 短链需要先展开
+	// b23.tv short links must be expanded first.
 	if m := b23Re.FindString(target); m != "" {
 		if loc, err := resolveRedirect(m); err == nil {
 			target = loc
@@ -215,7 +220,7 @@ func extractBVID(target string) (bvid string, part int) {
 	return bvid, part
 }
 
-// resolveRedirect 跟随短链，返回最终地址。
+// resolveRedirect follows a short link and returns the final URL.
 func resolveRedirect(target string) (string, error) {
 	client := &http.Client{
 		Timeout: 20 * time.Second,
@@ -240,26 +245,27 @@ func resolveRedirect(target string) (string, error) {
 	return loc, nil
 }
 
-// fetchBilibili 解析一条 B 站视频，返回最高档视频/音频地址与元信息。
+// fetchBilibili resolves one Bilibili video and returns the best video/audio
+// URLs plus metadata.
 func fetchBilibili(bvid string, part int, cookies []*http.Cookie) (videoDetail, error) {
 	var det videoDetail
 	if bvid == "" {
-		return det, fmt.Errorf("不是有效的 B 站视频链接")
+		return det, fmt.Errorf("not a valid Bilibili video URL")
 	}
 	client := biliClient(cookies)
 	referer := biliReferer + "video/" + bvid
 
-	// 1) view：拿 cid / 标题 / 封面 / 分P
+	// 1) view: cid / title / cover / pages
 	raw, err := biliAPI(client, biliAPIBase+"/x/web-interface/view?bvid="+url.QueryEscape(bvid), referer)
 	if err != nil {
 		return det, err
 	}
 	var view biliView
 	if err := json.Unmarshal(raw, &view); err != nil {
-		return det, fmt.Errorf("解析 view 失败: %w", err)
+		return det, fmt.Errorf("parse view: %w", err)
 	}
 	if len(view.Pages) == 0 {
-		return det, fmt.Errorf("视频没有可播放的分P")
+		return det, fmt.Errorf("video has no playable pages")
 	}
 	page := view.Pages[0]
 	for _, p := range view.Pages {
@@ -273,7 +279,7 @@ func fetchBilibili(bvid string, part int, cookies []*http.Cookie) (videoDetail, 
 		title = fmt.Sprintf("%s - P%d %s", view.Title, page.Page, page.Part)
 	}
 
-	// 2) playurl：qn=127 请求最高，fnval=4048 要 DASH
+	// 2) playurl: qn=127 asks for the highest quality, fnval=4048 asks for DASH.
 	q := url.Values{}
 	q.Set("bvid", bvid)
 	q.Set("cid", strconv.FormatInt(page.CID, 10))
@@ -289,10 +295,10 @@ func fetchBilibili(bvid string, part int, cookies []*http.Cookie) (videoDetail, 
 	}
 	var play biliPlayData
 	if err := json.Unmarshal(raw, &play); err != nil {
-		return det, fmt.Errorf("解析 playurl 失败: %w", err)
+		return det, fmt.Errorf("parse playurl: %w", err)
 	}
 	if len(play.Dash.Video) == 0 {
-		return det, fmt.Errorf("没有可用的 DASH 视频流（可能需要登录）")
+		return det, fmt.Errorf("no DASH video stream available (login may be required)")
 	}
 
 	if os.Getenv("VIDPULLER_BILI_DEBUG") != "" {
@@ -306,10 +312,10 @@ func fetchBilibili(bvid string, part int, cookies []*http.Cookie) (videoDetail, 
 	vs := pickBiliVideo(play.Dash.Video)
 	as := pickBiliAudio(play.Dash)
 	if vs == nil {
-		return det, fmt.Errorf("没有可用的视频流")
+		return det, fmt.Errorf("no video stream available")
 	}
 	if as == nil {
-		return det, fmt.Errorf("没有可用的音频流")
+		return det, fmt.Errorf("no audio stream available")
 	}
 	det = videoDetail{
 		PlayURL:  firstURL(*vs),
@@ -317,13 +323,14 @@ func fetchBilibili(bvid string, part int, cookies []*http.Cookie) (videoDetail, 
 		CoverURL: view.Pic,
 		Quality:  fmt.Sprintf("%dx%d %s %dkbps", vs.Width, vs.Height, codecName(vs.CodeCID), vs.Bandwidth/1000),
 		Desc:     title,
-		secUID:   view.Owner.Name, // 复用字段：B 站作者名
+		secUID:   view.Owner.Name, // reused field: Bilibili author name
 		id:       bvid,
 	}
 	return det, nil
 }
 
-// pickBiliVideo：清晰度 id 优先，同 id 下 AVC 优先，再比带宽。
+// pickBiliVideo prefers the highest quality ID, then AVC at the same ID, then
+// bitrate.
 func pickBiliVideo(streams []biliStream) *biliStream {
 	var best *biliStream
 	for i := range streams {
@@ -342,7 +349,8 @@ func betterBiliVideo(a, b biliStream) bool {
 	if a.ID != b.ID {
 		return a.ID > b.ID
 	}
-	// AVC（7）兼容性最好；HEVC（12）/AV1（13）同清晰度下体积更小
+	// AVC (7) has the best compatibility; HEVC (12)/AV1 (13) are smaller at
+	// the same quality.
 	ap, bp := a.CodeCID == 7, b.CodeCID == 7
 	if ap != bp {
 		return ap
@@ -350,7 +358,7 @@ func betterBiliVideo(a, b biliStream) bool {
 	return a.Bandwidth > b.Bandwidth
 }
 
-// pickBiliAudio：优先 FLAC/杜比，其次按带宽。
+// pickBiliAudio prefers FLAC/Dolby, then bitrate.
 func pickBiliAudio(d biliDash) *biliStream {
 	if d.Flac.Audio != nil && firstURL(*d.Flac.Audio) != "" {
 		return d.Flac.Audio
@@ -394,7 +402,8 @@ func codecName(codecid int) string {
 	}
 }
 
-// downloadBilibiliItem 下载音视频流并合并成 mp4。
+// downloadBilibiliItem downloads the audio and video streams and merges them
+// into an mp4.
 func downloadBilibiliItem(it Item, outRoot string, cookies []*http.Cookie) (downloadResult, error) {
 	var res downloadResult
 	det, err := fetchBilibili(it.AwemeID, 1, cookies)
@@ -431,22 +440,23 @@ func downloadBilibiliItem(it Item, outRoot string, cookies []*http.Cookie) (down
 	defer os.Remove(audioTmp)
 
 	client := biliClient(cookies)
-	// 大文件下载不受 API 的 60s 超时约束（用无 Timeout 的 client + downloadFile 内部 30 分钟 ctx）。
+	// Large downloads are not bound by the API's 60s timeout: use a client
+	// without Timeout; downloadFile has its own 30-minute context.
 	dlClient := &http.Client{Jar: client.Jar}
 	if _, err := downloadFile(biliFastURL(det.PlayURL), videoTmp, biliReferer, dlClient, progressRange{0, 0.90}); err != nil {
-		// 镜像不可用时回退原始 CDN
+		// Fall back to the original CDN when the mirror is unavailable.
 		if _, err2 := downloadFile(det.PlayURL, videoTmp+".retry", biliReferer, dlClient, progressRange{0, 0.90}); err2 == nil {
 			os.Rename(videoTmp+".retry", videoTmp)
 		} else {
-			return res, fmt.Errorf("视频流: %w（回退也失败: %v）", err, err2)
+			return res, fmt.Errorf("video stream: %w (fallback also failed: %v)", err, err2)
 		}
 	}
 	if _, err := downloadFile(det.AudioURL, audioTmp, biliReferer, dlClient, progressRange{0.90, 0.07}); err != nil {
-		return res, fmt.Errorf("音频流: %w", err)
+		return res, fmt.Errorf("audio stream: %w", err)
 	}
 	emitProgress(0.97)
 	if err := mergeAV(videoTmp, audioTmp, res.Video); err != nil {
-		return res, fmt.Errorf("ffmpeg 合并: %w", err)
+		return res, fmt.Errorf("ffmpeg merge: %w", err)
 	}
 	res.Quality = det.Quality
 	st, err := os.Stat(res.Video)
@@ -458,7 +468,7 @@ func downloadBilibiliItem(it Item, outRoot string, cookies []*http.Cookie) (down
 
 	if it.CoverURL != "" {
 		if _, err := downloadFile(it.CoverURL, res.Cover, biliReferer, dlClient); err != nil {
-			fmt.Printf("  警告: 封面下载失败: %v\n", err)
+			fmt.Printf("  warning: cover download failed: %v\n", err)
 			res.Cover = ""
 		}
 	}
@@ -473,13 +483,14 @@ func downloadBilibiliItem(it Item, outRoot string, cookies []*http.Cookie) (down
 		return res, err
 	}
 	if err := os.WriteFile(res.Meta, data, 0o644); err != nil {
-		return res, fmt.Errorf("元数据: %w", err)
+		return res, fmt.Errorf("metadata: %w", err)
 	}
 	return res, nil
 }
 
-// biliFastURL 把 akamai 的直链换到华为云镜像（实测快一个数量级）；
-// 其它 CDN 不动，下载失败时调用方会回退原地址。
+// biliFastURL rewrites an akamai URL to the Huawei Cloud mirror (measured an
+// order of magnitude faster); other CDNs are left alone and the caller falls
+// back to the original URL on failure.
 func biliFastURL(u string) string {
 	parsed, err := url.Parse(u)
 	if err != nil || parsed.Host == "" {
@@ -491,7 +502,7 @@ func biliFastURL(u string) string {
 	return parsed.String()
 }
 
-// mergeAV 用 ffmpeg 无损封装音视频（-c copy）。
+// mergeAV losslessly remuxes audio and video with ffmpeg (-c copy).
 func mergeAV(videoPath, audioPath, outPath string) error {
 	cmd := exec.Command("ffmpeg", "-y", "-loglevel", "error",
 		"-i", videoPath, "-i", audioPath,

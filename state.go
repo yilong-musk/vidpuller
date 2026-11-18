@@ -8,10 +8,10 @@ import (
 	"time"
 )
 
-// stateFile 是输出根目录下的增量账本文件名。
+// stateFile is the incremental ledger filename under the output root.
 const stateFile = ".state.json"
 
-// State 记录已下载的条目，键为 "platform:id"。
+// State records downloaded items, keyed by "platform:id".
 type State struct {
 	Items map[string]StateItem `json:"items"`
 }
@@ -51,8 +51,9 @@ func (s *State) save(path string) error {
 	return os.Rename(tmp, path)
 }
 
-// has 判断是否已下载。旧版账本只有裸 aweme_id
-// （没有平台前缀），这里按抖音兼容，避免迁移后重复下载。
+// has reports whether an item has already been downloaded. Legacy ledgers
+// stored bare aweme_ids without a platform prefix; those are treated as
+// Douyin entries to avoid re-downloading after migration.
 func (s *State) has(platform, id string) bool {
 	if _, ok := s.Items[stateKey(platform, id)]; ok {
 		return true

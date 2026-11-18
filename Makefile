@@ -1,7 +1,7 @@
 BINARY := vidpuller
 GO     ?= go
 
-.PHONY: all build test vet fmt check install clean
+.PHONY: all build test vet fmt lang check install clean
 
 all: check build
 
@@ -17,7 +17,10 @@ vet:
 fmt:
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
-check: fmt vet test
+lang:
+	$(GO) run ./tools/langcheck
+
+check: fmt vet test lang
 
 install: build
 	mkdir -p $(HOME)/.local/bin

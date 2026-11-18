@@ -11,54 +11,57 @@ import (
 const version = "0.1.0"
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `vidpuller %s — 多平台视频下载（抖音 / TikTok / B 站）
+	fmt.Fprintf(os.Stderr, `vidpuller %s — multi-platform video downloader (Douyin / TikTok / Bilibili)
 
-用法:
-  vidpuller download <timeline-url|file>   按时间线批量下载
-  vidpuller get <视频链接>                 下载单条（TikTok / B 站）
-  vidpuller list <timeline-url|file>       只列出条目，不下载
+Usage:
+  vidpuller download <timeline-url|file>   download items from a timeline
+  vidpuller get <video-url>                download one video (TikTok / Bilibili)
+  vidpuller list <timeline-url|file>       list items without downloading
   vidpuller version
 
-输入是一份平台无关的 JSON 时间线（本地文件或任意 HTTP 地址）:
+Input is a platform-neutral JSON timeline (local file or any HTTP URL):
   {
-    "platform": "douyin",                // 可选；也可逐条写 item.platform
+    "platform": "douyin",                // optional; item.platform also works
     "items": [
       {"video_id": "…", "title": "…", "play_url": "…"}
     ]
   }
-  作品 ID 兼容 video_id / aweme_id / id（B 站 BV 号）；
-  平台可逐条写 item.platform（优先于顶层 source），也支持混合平台时间线；
-  缺失时可从 BV 号、视频页地址或 --platform 推断。
+  Video IDs accept video_id / aweme_id / id (Bilibili BV ID).
+  Set item.platform per item (it overrides the top-level source); mixed
+  timelines are supported. If the platform is omitted, it is inferred from
+  the BV ID, video page URL, timeline URL, or --platform.
 
-download 参数:
-  -o, --out DIR        输出根目录（默认 ./downloads）
-  -n, --limit N        最多下载 N 条（已下载跳过的不计数；0=不限）
-      --since DATE     只下该日期之后（YYYY-MM-DD）
-      --ids A,B        只下指定作品 ID（video_id / aweme_id）
-      --dry-run        只打印将下载哪些
-      --force          已下载过也重新下载
-      --interval DUR   每条之间的间隔（默认 3s）
-      --platform NAME  覆盖平台识别（douyin|tiktok|bilibili）
-      --cookies FILE   登录 cookie（Netscape / JSON / "k=v; k=v"），TikTok 提画质、B 站 1080p+
-      --progress       往 stderr 输出进度行（PROGRESS <0-100>，供调用方解析）
+download options:
+  -o, --out DIR        output root (default ./downloads)
+  -n, --limit N        download at most N items (skipped items do not count; 0 = unlimited)
+      --since DATE     only items published on or after DATE (YYYY-MM-DD)
+      --ids A,B        only the given video IDs (video_id / aweme_id)
+      --dry-run        print what would be downloaded
+      --force          re-download items that are already recorded
+      --interval DUR   delay between items (default 3s)
+      --platform NAME  override platform detection (douyin|tiktok|bilibili)
+      --cookies FILE   login cookies (Netscape / JSON / "k=v; k=v"); raises
+                       TikTok quality and unlocks Bilibili 1080p+
+      --progress       write progress lines to stderr (PROGRESS <0-100>)
 
-get 参数:
-  -o, --out DIR        输出根目录（默认 ./downloads）
-      --force          已下载过也重新下载
+get options:
+  -o, --out DIR        output root (default ./downloads)
+      --force          re-download an item that is already recorded
 
-list 参数:
-  -n, --limit N        最多列出 N 条（0=全部）
-      --since DATE     只列该日期之后
+list options:
+  -n, --limit N        list at most N items (0 = all)
+      --since DATE     only items published on or after DATE
 
-抖音单条暂不支持直接给链接：detail 接口需要浏览器签名，纯 HTTP 拿不到
-无水印直链。请改用 download + --ids，或把该条放进时间线 JSON。
+Douyin single-video URLs are not supported: the detail endpoint requires a
+browser signature and pure HTTP cannot obtain a watermark-free stream. Use
+download + --ids, or put the item in a timeline JSON.
 
-产物: <out>/<platform>/<author>/<video_id>_<标题>.mp4 + .jpg + .json
-增量: <out>/.state.json（按 platform:id 去重）
+Output: <out>/<platform>/<author>/<video_id>_<title>.mp4 + .jpg + .json
+State:  <out>/.state.json (dedup key: platform:id)
 `, version)
 }
 
-// options 是所有子命令共享的解析结果。
+// options holds the parsed flags shared by all subcommands.
 type options struct {
 	out      string
 	limit    int
@@ -73,8 +76,9 @@ type options struct {
 	progress bool
 }
 
-// parseOptions 手写解析：标准库 flag 包遇到第一个位置参数就停止，
-// 而这个工具希望 `vidpuller download URL -n 5` 和 `-n 5 URL` 都能用。
+// parseOptions is a hand-written parser: the standard flag package stops at
+// the first positional argument, while this tool accepts both
+// `vidpuller download URL -n 5` and `-n 5 URL`.
 func parseOptions(args []string) (options, []string, error) {
 	o := options{out: "./downloads", interval: 3 * time.Second}
 	var pos []string
@@ -99,7 +103,7 @@ func parseOptions(args []string) (options, []string, error) {
 			}
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 0 {
-				return o, nil, fmt.Errorf("无效的 --limit: %q", v)
+				return o, nil, fmt.Errorf("invalid --limit: %q", v)
 			}
 			o.limit, i = n, next
 		case "--since":
@@ -109,7 +113,7 @@ func parseOptions(args []string) (options, []string, error) {
 			}
 			t, err := time.ParseInLocation("2006-01-02", v, time.Local)
 			if err != nil {
-				return o, nil, fmt.Errorf("无效的 --since: %q（需要 YYYY-MM-DD）", v)
+				return o, nil, fmt.Errorf("invalid --since: %q (want YYYY-MM-DD)", v)
 			}
 			o.since, i = t, next
 		case "--ids":
@@ -130,7 +134,7 @@ func parseOptions(args []string) (options, []string, error) {
 			}
 			d, err := time.ParseDuration(v)
 			if err != nil || d < 0 {
-				return o, nil, fmt.Errorf("无效的 --interval: %q", v)
+				return o, nil, fmt.Errorf("invalid --interval: %q", v)
 			}
 			o.interval, i = d, next
 		case "--progress":
@@ -147,7 +151,7 @@ func parseOptions(args []string) (options, []string, error) {
 				return o, nil, err
 			}
 			if v != platformDouyin && v != platformTikTok && v != platformBilibili {
-				return o, nil, fmt.Errorf("无效的 --platform: %q（douyin|tiktok|bilibili）", v)
+				return o, nil, fmt.Errorf("invalid --platform: %q (douyin|tiktok|bilibili)", v)
 			}
 			o.platform, i = v, next
 		case "--dry-run":
@@ -161,7 +165,7 @@ func parseOptions(args []string) (options, []string, error) {
 			os.Exit(0)
 		default:
 			if strings.HasPrefix(arg, "-") && arg != "-" {
-				return o, nil, fmt.Errorf("未知参数: %s", arg)
+				return o, nil, fmt.Errorf("unknown flag: %s", arg)
 			}
 			pos = append(pos, arg)
 		}
@@ -169,16 +173,17 @@ func parseOptions(args []string) (options, []string, error) {
 	return o, pos, nil
 }
 
-// flagValue 取出 --flag value 或 --flag=value 的值，返回下一个待读下标。
+// flagValue returns the value of --flag value or --flag=value, plus the next
+// argument index to read.
 func flagValue(inline string, hasInline bool, args []string, i int) (string, int, error) {
 	if hasInline {
 		if inline == "" {
-			return "", i, fmt.Errorf("参数 %s 缺少值", args[i])
+			return "", i, fmt.Errorf("flag %s needs a value", args[i])
 		}
 		return inline, i, nil
 	}
 	if i+1 >= len(args) {
-		return "", i, fmt.Errorf("参数 %s 缺少值", args[i])
+		return "", i, fmt.Errorf("flag %s needs a value", args[i])
 	}
 	return args[i+1], i + 1, nil
 }
@@ -201,7 +206,7 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "未知命令: %s\n\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", cmd)
 		usage()
 		os.Exit(2)
 	}

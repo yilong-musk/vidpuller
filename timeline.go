@@ -11,23 +11,24 @@ import (
 	"time"
 )
 
-// 平台标识：同时也是输出目录名和 state 键前缀。
+// Platform identifiers are also used as output directory names and state key
+// prefixes.
 const (
 	platformDouyin = "douyin"
 	platformTikTok = "tiktok"
 )
 
-// Item 是各平台 timeline 共用的条目结构。VideoID 是通用字段；
-// AwemeID 和 BVID 是历史字段名，解析时会自动归一。
+// Item is the shared item shape for every platform's timeline. VideoID is the
+// canonical field; AwemeID and BVID are legacy aliases normalized on load.
 type Item struct {
-	VideoID     string   `json:"video_id,omitempty"` // 通用作品 ID（推荐）
-	AwemeID     string   `json:"aweme_id,omitempty"` // 抖音/TikTok 兼容字段
-	BVID        string   `json:"id,omitempty"`       // B 站 BV 号兼容字段
-	Platform    string   `json:"platform,omitempty"` // 逐条平台（可选）
-	Title       string   `json:"title,omitempty"`    // 通用标题（B 站常用）
-	URL         string   `json:"url,omitempty"`      // 视频页地址（B 站需要）
+	VideoID     string   `json:"video_id,omitempty"` // canonical video ID
+	AwemeID     string   `json:"aweme_id,omitempty"` // Douyin/TikTok alias
+	BVID        string   `json:"id,omitempty"`       // Bilibili BV ID alias
+	Platform    string   `json:"platform,omitempty"` // optional per-item platform
+	Title       string   `json:"title,omitempty"`    // generic title (Bilibili uses this)
+	URL         string   `json:"url,omitempty"`      // video page URL (required by Bilibili)
 	CreatedAt   string   `json:"created_at,omitempty"`
-	PublishedAt string   `json:"published_at,omitempty"` // 通用发布时间别名
+	PublishedAt string   `json:"published_at,omitempty"` // generic publish-time alias
 	Images      []string `json:"images,omitempty"`
 	Desc        string   `json:"desc"`
 	Author      string   `json:"author"`
@@ -39,11 +40,11 @@ type Item struct {
 	IsTop       int      `json:"is_top"`
 	PlayURL     string   `json:"play_url"`
 	CoverURL    string   `json:"cover_url"`
-	Quality     string   `json:"-"` // 实际下载档位（TikTok 重解析后填）
+	Quality     string   `json:"-"` // actual downloaded quality (filled after TikTok re-resolution)
 }
 
-// Timeline 是一份平台无关的时间线。source 和 platform 等价，
-// 可以放在顶层，也可以逐条放在 Item.Platform 里。
+// Timeline is a platform-neutral timeline. source and platform are
+// equivalent; either can appear at the top level, or per item.
 type Timeline struct {
 	Source    string `json:"source,omitempty"`
 	Platform  string `json:"platform,omitempty"`
@@ -52,14 +53,14 @@ type Timeline struct {
 	SecUID    string `json:"sec_uid,omitempty"`
 	FetchedAt string `json:"fetched_at"`
 	Items     []Item `json:"items"`
-	Data      []Item `json:"data,omitempty"` // items 的别名，适配常见 API 包装
+	Data      []Item `json:"data,omitempty"` // alias for items, for common API wrappers
 }
 
-// loadTimeline 读取 URL 或本地文件，返回解析后的时间线。
+// loadTimeline reads a URL or a local file and returns the parsed timeline.
 func loadTimeline(src string) (*Timeline, error) {
 	src = strings.TrimSpace(src)
 	if src == "" {
-		return nil, fmt.Errorf("缺少时间线地址或文件")
+		return nil, fmt.Errorf("missing timeline URL or file")
 	}
 	var raw []byte
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
@@ -71,7 +72,7 @@ func loadTimeline(src string) (*Timeline, error) {
 	} else {
 		data, err := os.ReadFile(src)
 		if err != nil {
-			return nil, fmt.Errorf("读取时间线文件失败: %w", err)
+			return nil, fmt.Errorf("read timeline file: %w", err)
 		}
 		raw = data
 	}
@@ -79,27 +80,29 @@ func loadTimeline(src string) (*Timeline, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if strings.HasPrefix(trimmed, "[") {
 		if err := json.Unmarshal(raw, &tl.Items); err != nil {
-			return nil, fmt.Errorf("时间线不是合法 JSON: %w", err)
+			return nil, fmt.Errorf("timeline is not valid JSON: %w", err)
 		}
 	} else if err := json.Unmarshal(raw, &tl); err != nil {
-		return nil, fmt.Errorf("时间线不是合法 JSON: %w", err)
+		return nil, fmt.Errorf("timeline is not valid JSON: %w", err)
 	}
 	if len(tl.Items) == 0 && len(tl.Data) > 0 {
 		tl.Items = tl.Data
 	}
 	if len(tl.Items) == 0 && !strings.HasPrefix(trimmed, "[") &&
 		!strings.Contains(trimmed, `"items"`) && !strings.Contains(trimmed, `"data"`) {
-		return nil, fmt.Errorf("时间线里没有 items 字段")
+		return nil, fmt.Errorf("timeline has no items field")
 	}
 	normalizeItems(&tl)
-	// 上游已经按时间倒序，这里再排一次，本地文件被手工改过也不会乱序。
+	// Upstreams normally sort newest-first; sort again so a hand-edited local
+	// file cannot reorder the queue.
 	sort.SliceStable(tl.Items, func(i, j int) bool {
 		return tl.Items[i].CreateTime > tl.Items[j].CreateTime
 	})
 	return &tl, nil
 }
 
-// normalizeItems 把各平台视图的差异字段对齐到 Item 的通用字段。
+// normalizeItems aligns the platform-specific aliases with Item's canonical
+// fields.
 func normalizeItems(tl *Timeline) {
 	if tl.Source == "" && tl.Platform != "" {
 		tl.Source = tl.Platform
@@ -146,7 +149,7 @@ func fetchURL(url string) (string, error) {
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("请求时间线失败: %w", err)
+		return "", fmt.Errorf("fetch timeline: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
@@ -154,12 +157,13 @@ func fetchURL(url string) (string, error) {
 		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("时间线返回 HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return "", fmt.Errorf("timeline returned HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 	return string(body), nil
 }
 
-// normalizePlatform 返回受支持的平台名；未知值返回空串。
+// normalizePlatform returns a supported platform name, or "" for an unknown
+// value.
 func normalizePlatform(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case platformDouyin, platformTikTok, platformBilibili:
@@ -168,14 +172,14 @@ func normalizePlatform(s string) string {
 	return ""
 }
 
-// isBVID 只把形如 BV1xxxxxxxxx 的 id 当作 B 站 BV 号，
-// 避免通用时间线里的数字 id 被误判成 B 站。
+// isBVID treats only BV1xxxxxxxxx-shaped IDs as Bilibili BV IDs, so numeric
+// IDs in a generic timeline are not misclassified as Bilibili.
 func isBVID(s string) bool {
 	s = strings.TrimSpace(s)
 	return len(s) == 12 && strings.HasPrefix(s, "BV")
 }
 
-// platformFromSource 从时间线 URL 推断平台；纯 URL 规则，不看条目。
+// platformFromSource infers the platform from the timeline URL only.
 func platformFromSource(src string) string {
 	lower := strings.ToLower(src)
 	switch {
@@ -189,7 +193,8 @@ func platformFromSource(src string) string {
 	return ""
 }
 
-// platformFromItem 从单条内容推断平台：BV 号 / 视频页地址 > 时间线 URL > 媒体直链域名。
+// platformFromItem infers the platform from one item: BV ID / video page URL,
+// then the timeline URL, then media URL hosts.
 func platformFromItem(it Item, src string) string {
 	if isBVID(it.BVID) || isBVID(it.VideoID) || isBVID(it.AwemeID) ||
 		strings.Contains(strings.ToLower(it.URL), "bilibili.com") {
@@ -212,9 +217,10 @@ func platformFromItem(it Item, src string) string {
 	return ""
 }
 
-// platformForItem 决定单条内容属于哪个平台：
-// --platform > item.platform > timeline.source/platform > 条目特征 > 时间线 URL > 媒体直链。
-// 返回空串表示无法判断，由调用方报错或跳过，不再默认成某个平台。
+// platformForItem decides the platform for one item:
+// --platform > item.platform > timeline.source/platform > item features >
+// timeline URL > media URLs. An empty result means the platform is unknown;
+// callers report or skip the item instead of defaulting to a platform.
 func platformForItem(tl *Timeline, it Item, src, override string) string {
 	if s := normalizePlatform(override); s != "" {
 		return s
@@ -228,8 +234,9 @@ func platformForItem(tl *Timeline, it Item, src, override string) string {
 	return platformFromItem(it, src)
 }
 
-// detectPlatform 决定整份时间线的展示平台。逐条 platform 优先于顶层 source，
-// 这样混合时间线也能按条目正确路由。
+// detectPlatform decides the display platform for the whole timeline. A
+// per-item platform takes precedence over the top-level source, so mixed
+// timelines route correctly.
 func detectPlatform(tl *Timeline, src, override string) string {
 	if s := normalizePlatform(override); s != "" {
 		return s
@@ -250,7 +257,8 @@ func detectPlatform(tl *Timeline, src, override string) string {
 	return platformFromSource(src)
 }
 
-// selectItems 按 --since / --ids / --limit 过滤；limit 只数真正要下载的条目。
+// selectItems filters by --since / --ids / --limit. The limit counts only
+// items that will actually be attempted.
 func selectItems(tl *Timeline, o options) []Item {
 	var out []Item
 	for _, it := range tl.Items {
