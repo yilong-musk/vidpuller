@@ -75,6 +75,12 @@ Linux、macOS、Windows（amd64/arm64）的静态二进制随每个
 [release](https://github.com/yilong-musk/vidpuller/releases) 发布。下载对应平台
 的压缩包，用 `checksums.txt` 校验后把 `vidpuller` 放进 `PATH`。
 
+macOS 或 Linux 上装了 [Homebrew](https://brew.sh) 时：
+
+```bash
+brew install --cask yilong-musk/tap/vidpuller
+```
+
 已有 Go 工具链（1.27+）时：
 
 ```bash

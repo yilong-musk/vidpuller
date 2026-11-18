@@ -85,6 +85,12 @@ to every [release](https://github.com/yilong-musk/vidpuller/releases). Download
 the archive for your platform, check it against `checksums.txt`, and put
 `vidpuller` on your `PATH`.
 
+On macOS or Linux with [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask yilong-musk/tap/vidpuller
+```
+
 With a Go toolchain (1.27+):
 
 ```bash
