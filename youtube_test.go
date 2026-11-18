@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,84 +53,79 @@ func TestYouTubeTimelineNormalization(t *testing.T) {
 	}
 }
 
-func TestParseYouTubeProgress(t *testing.T) {
-	cases := []struct {
-		in   string
-		want float64
-		ok   bool
-	}{
-		{"PROGRESS  42.3%", 0.423, true},
-		{"PROGRESS 100.0%", 1.0, true},
-		{"[download] 10%", 0, false},
-		{"", 0, false},
-	}
-	for _, tc := range cases {
-		got, ok := parseYouTubeProgress(tc.in)
-		if ok != tc.ok || (ok && got != tc.want) {
-			t.Fatalf("parseYouTubeProgress(%q) = %v, %v; want %v, %v", tc.in, got, ok, tc.want, tc.ok)
-		}
-	}
+func ytTestFormat(itag int, mime string, height int, bitrate int64, url string) ytFormat {
+	return ytFormat{Itag: itag, MimeType: mime, Height: height, Bitrate: bitrate, URL: url}
 }
 
-func TestYouTubeArgs(t *testing.T) {
-	args := strings.Join(youtubeArgs("https://youtu.be/x", "/tmp/out", "/tmp/cookies.txt"), " ")
-	for _, want := range []string{
-		"--no-playlist",
-		"--write-info-json",
-		"--merge-output-format mp4",
-		"-o /tmp/out/%(id)s.%(ext)s",
-		"--cookies /tmp/cookies.txt",
-		"https://youtu.be/x",
-	} {
-		if !strings.Contains(args, want) {
-			t.Fatalf("args missing %q: %s", want, args)
-		}
+func TestSelectYouTubeStreams(t *testing.T) {
+	player := ytPlayer{}
+	player.StreamingData.AdaptiveFormats = []ytFormat{
+		ytTestFormat(137, `video/mp4; codecs="avc1.640028"`, 1080, 4_000_000, "v1080avc"),
+		ytTestFormat(399, `video/mp4; codecs="av01.0.08M.08"`, 1080, 1_500_000, "v1080av1"),
+		ytTestFormat(401, `video/mp4; codecs="av01.0.12M.08"`, 2160, 9_000_000, "v2160"),
+		ytTestFormat(140, `audio/mp4; codecs="mp4a.40.2"`, 0, 130_000, "aac"),
+		ytTestFormat(251, `audio/webm; codecs="opus"`, 0, 160_000, "opus"),
 	}
-}
-
-func TestDownloadYouTubeItemWithFakeTool(t *testing.T) {
-	fake := filepath.Join(t.TempDir(), "yt-dlp")
-	script := `#!/bin/sh
-out=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -o) out="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-dir=$(dirname "$out")
-printf '%s' '{"id":"abc12345678","title":"Fake video","uploader":"Fake author","height":720,"vcodec":"avc1.4d401f"}' > "$dir/abc12345678.info.json"
-printf 'fake-mp4-data' > "$dir/abc12345678.mp4"
-printf 'PROGRESS  50.0%%\n'
-printf 'PROGRESS 100.0%%\n'
-`
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("YT_DLP_BIN", fake)
-
-	out := t.TempDir()
-	res, err := downloadYouTubeItem(Item{
-		VideoID: "abc12345678",
-		URL:     "https://www.youtube.com/watch?v=abc12345678",
-	}, out, "")
+	video, audio, combined, err := selectYouTubeStreams(player)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Video, filepath.Join("youtube", "Fake author")) {
-		t.Fatalf("video path = %s", res.Video)
+	if combined || video.URL != "v1080avc" || audio.URL != "aac" {
+		t.Fatalf("selected video=%+v audio=%+v combined=%v", video, audio, combined)
 	}
-	if res.Bytes != int64(len("fake-mp4-data")) {
-		t.Fatalf("bytes = %d", res.Bytes)
+}
+
+func TestSelectYouTubeStreamsFallsBackTo720(t *testing.T) {
+	player := ytPlayer{}
+	player.StreamingData.AdaptiveFormats = []ytFormat{
+		ytTestFormat(136, `video/mp4; codecs="avc1.4d401f"`, 720, 1_000_000, "v720"),
+		ytTestFormat(140, `audio/mp4; codecs="mp4a.40.2"`, 0, 130_000, "aac"),
 	}
-	if res.Quality != "720p avc1" {
-		t.Fatalf("quality = %q", res.Quality)
-	}
-	data, err := os.ReadFile(res.Meta)
+	video, audio, combined, err := selectYouTubeStreams(player)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"platform": "youtube"`) || !strings.Contains(string(data), "Fake video") {
-		t.Fatalf("metadata = %s", data)
+	if combined || video.URL != "v720" || audio.URL != "aac" {
+		t.Fatalf("selected video=%+v audio=%+v combined=%v", video, audio, combined)
+	}
+}
+
+func TestSelectYouTubeStreamsProgressiveFallback(t *testing.T) {
+	player := ytPlayer{}
+	player.StreamingData.Formats = []ytFormat{
+		ytTestFormat(22, `video/mp4; codecs="avc1.64001F, mp4a.40.2"`, 720, 1_000_000, "progressive"),
+	}
+	video, audio, combined, err := selectYouTubeStreams(player)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !combined || video.URL != "progressive" || audio.URL != "" {
+		t.Fatalf("selected video=%+v audio=%+v combined=%v", video, audio, combined)
+	}
+}
+
+func TestSelectYouTubeStreamsRejectsCipherOnly(t *testing.T) {
+	player := ytPlayer{}
+	player.StreamingData.AdaptiveFormats = []ytFormat{
+		{Itag: 137, MimeType: `video/mp4; codecs="avc1.640028"`, Height: 1080, SignatureCipher: "cipher"},
+		ytTestFormat(140, `audio/mp4; codecs="mp4a.40.2"`, 0, 130_000, "aac"),
+	}
+	if _, _, _, err := selectYouTubeStreams(player); err == nil || !strings.Contains(err.Error(), "no YouTube video stream") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestYouTubeCodec(t *testing.T) {
+	cases := map[string]string{
+		`video/mp4; codecs="avc1.640028"`:   "avc1",
+		`video/mp4; codecs="av01.0.08M.08"`: "av01",
+		`audio/mp4; codecs="mp4a.40.2"`:     "mp4a",
+		`video/webm; codecs="vp9"`:          "vp9",
+		"video/mp4":                         "",
+	}
+	for mime, want := range cases {
+		if got := youtubeCodec(mime); got != want {
+			t.Fatalf("youtubeCodec(%q) = %q, want %q", mime, got, want)
+		}
 	}
 }
