@@ -1,0 +1,5 @@
+vidpuller
+downloads/
+*.part
+.DS_Store
+*.test
