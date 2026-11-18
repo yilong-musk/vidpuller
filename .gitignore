@@ -1,4 +1,5 @@
 vidpuller
+dist/
 downloads/
 *.part
 .DS_Store

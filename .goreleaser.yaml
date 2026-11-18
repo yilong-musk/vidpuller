@@ -1,0 +1,59 @@
+# Release pipeline: pushing a vX.Y.Z tag builds static binaries for Linux,
+# macOS and Windows (amd64/arm64), writes checksums and attaches everything to
+# the GitHub release. No third-party dependencies, so no module downloads.
+version: 2
+
+project_name: vidpuller
+
+before:
+  hooks:
+    - go run ./tools/langcheck
+
+builds:
+  - id: vidpuller
+    main: .
+    binary: vidpuller
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: vidpuller
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - README.zh-CN.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

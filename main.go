@@ -8,7 +8,8 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+// version is injected at build time with -X main.version=...
+var version = "dev"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `vidpuller %s — multi-platform video downloader (Douyin / TikTok / Bilibili / YouTube)

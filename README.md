@@ -78,6 +78,19 @@ media URL hosts. If no rule matches, the command fails instead of guessing a
 platform. Mixed-platform timelines are supported when each item carries
 `platform`.
 
+## Install
+
+Prebuilt static binaries for Linux, macOS and Windows (amd64/arm64) are attached
+to every [release](https://github.com/yilong-musk/vidpuller/releases). Download
+the archive for your platform, check it against `checksums.txt`, and put
+`vidpuller` on your `PATH`.
+
+With a Go toolchain (1.27+):
+
+```bash
+go install github.com/yilong-musk/vidpuller@latest
+```
+
 ## Requirements
 
 - Go 1.27+ to build.
