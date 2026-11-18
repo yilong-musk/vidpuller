@@ -8,7 +8,7 @@
 
 从抖音、TikTok、B 站和 YouTube 下载视频，输入是一份平台无关的 JSON 时间线 ——
 自包含、单个静态二进制、只用标准库（`go.mod` 里没有任何 `require`）。YouTube
-解析为内置实现，目前最高支持 1080p。
+解析为内置实现，默认上限 1080p，可用 `--max-height` 提到 1440p/2160p。
 
 ## 支持的平台
 
@@ -132,6 +132,7 @@ vidpuller get 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 | `--force` | 已下载过也重新下载 |
 | `--interval DUR` | 每条间隔，默认 `3s` |
 | `--platform douyin\|tiktok\|bilibili\|youtube` | 覆盖平台自动识别 |
+| `--max-height N` | YouTube 最高画质（默认 1080，可选 1440/2160） |
 | `--cookies FILE` | 登录 cookie（Netscape / JSON / `k=v; k=v`） |
 | `--progress` | 向 stderr 输出 `PROGRESS <0-100>` 行 |
 
@@ -161,17 +162,17 @@ downloads/
 - **B 站**：`view` 取 cid，`playurl` 取 DASH 流，`ffmpeg -c copy` 合并；Akamai
   地址优先走镜像，失败时回退原始 CDN。
 - **YouTube**：内置 InnerTube 解析器，使用 VISIONOS 客户端请求播放器响应，
-  该客户端返回不带签名加密的直链。优先选 1080p 以内最高画质（AVC/MP4 优先），
-  搭配最佳 MP4 音频，再用 `ffmpeg -c copy` 合并。
+  该客户端返回不带签名加密的直链。优先选 `--max-height` 以内最高画质
+  （AVC/MP4 优先），搭配最佳 MP4 音频，再用 `ffmpeg -c copy` 合并。
 
 ## 已知限制
 
 - **抖音单条链接不支持**：详情接口需要浏览器签名（`a_bogus`），纯 HTTP 拿不到
   无水印直链；要下某一条，用 `download --ids <video_id>`。
 - TikTok 图文帖没有 `play_url`，会被跳过（封面仍可从时间线获取）。
-- **YouTube** 目前最高选择 1080p，暂不选 1440p/2160p。年龄限制、DRM 或地区限制
-  的视频可能需要 cookie，也可能无法下载。不展开播放列表或频道时间线，只接受
-  单条视频地址。
+- **YouTube** 默认 1080p；需要更高画质时用 `--max-height 1440` 或
+  `--max-height 2160`（文件可能有几百 MB）。年龄限制、DRM 或地区限制的视频可能
+  需要 cookie，也可能无法下载。不展开播放列表或频道时间线，只接受单条视频地址。
 - 私密或地区限制内容由平台报错；时间线里没有的条目，本工具也看不到。
 - 时间线的抓取、签名与登录态由调用方负责，本工具只消费 JSON。
 

@@ -9,7 +9,8 @@ English | [Chinese (Simplified)](README.zh-CN.md)
 Downloads videos from Douyin, TikTok, Bilibili and YouTube from a
 platform-neutral JSON timeline — self-contained, one static binary, standard
 library only (there is not a single `require` in `go.mod`). YouTube extraction
-is built in and currently capped at 1080p.
+is built in; the default ceiling is 1080p and `--max-height` raises it to
+1440p or 2160p.
 
 ## Supported platforms
 
@@ -141,6 +142,7 @@ vidpuller get 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 | `--force` | Re-download items that are already recorded |
 | `--interval DUR` | Delay between items, default `3s` |
 | `--platform douyin\|tiktok\|bilibili\|youtube` | Override platform detection |
+| `--max-height N` | Maximum YouTube height (default 1080; e.g. 1440, 2160) |
 | `--cookies FILE` | Login cookies (Netscape / JSON / `k=v; k=v`) |
 | `--progress` | Write `PROGRESS <0-100>` lines to stderr |
 
@@ -177,8 +179,9 @@ only kept for reference.
   with the original CDN as fallback.
 - **YouTube**: a native InnerTube extractor requests the player response with
   the VISIONOS client, which exposes direct adaptive stream URLs without a
-  signature cipher. The highest video up to 1080p is preferred (AVC/MP4
-  first), matched with the best MP4 audio, and merged by `ffmpeg -c copy`.
+  signature cipher. The highest video up to `--max-height` is preferred
+  (AVC/MP4 first), matched with the best MP4 audio, and merged by
+  `ffmpeg -c copy`.
 
 ## Limitations
 
@@ -187,10 +190,11 @@ only kept for reference.
   stream. Use `download --ids <video_id>` instead.
 - TikTok image posts have no `play_url` and are skipped (the cover can still be
   fetched from the timeline).
-- **YouTube** currently selects up to 1080p; 1440p/2160p are not selected yet.
-  Age-restricted, DRM-protected or region-blocked videos may need cookies or
-  may not be downloadable. Playlists and channel feeds are not expanded; pass
-  single video URLs.
+- **YouTube** defaults to 1080p; pass `--max-height 1440` or `--max-height
+  2160` for higher quality (files can be several hundred MB). Age-restricted,
+  DRM-protected or region-blocked videos may need cookies or may not be
+  downloadable. Playlists and channel feeds are not expanded; pass single
+  video URLs.
 - Private or region-restricted content is reported as an error by the platform;
   the tool cannot see what the timeline data does not include.
 - Timeline collection, signing and login state are the caller's

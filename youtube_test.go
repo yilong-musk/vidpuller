@@ -75,6 +75,25 @@ func TestSelectYouTubeStreams(t *testing.T) {
 	}
 }
 
+func TestSelectYouTubeStreamsAllows4K(t *testing.T) {
+	old := youtubeMaxHeight
+	youtubeMaxHeight = 2160
+	defer func() { youtubeMaxHeight = old }()
+	player := ytPlayer{}
+	player.StreamingData.AdaptiveFormats = []ytFormat{
+		ytTestFormat(137, `video/mp4; codecs="avc1.640028"`, 1080, 4_000_000, "v1080"),
+		ytTestFormat(401, `video/mp4; codecs="av01.0.12M.08"`, 2160, 9_000_000, "v2160"),
+		ytTestFormat(140, `audio/mp4; codecs="mp4a.40.2"`, 0, 130_000, "aac"),
+	}
+	video, audio, combined, err := selectYouTubeStreams(player)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if combined || video.URL != "v2160" || audio.URL != "aac" {
+		t.Fatalf("selected video=%+v audio=%+v combined=%v", video, audio, combined)
+	}
+}
+
 func TestSelectYouTubeStreamsFallsBackTo720(t *testing.T) {
 	player := ytPlayer{}
 	player.StreamingData.AdaptiveFormats = []ytFormat{

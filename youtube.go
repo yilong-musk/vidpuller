@@ -18,10 +18,14 @@ import (
 )
 
 const (
-	platformYouTube  = "youtube"
-	youtubeMaxHeight = 1080
-	youtubeUA        = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+	platformYouTube         = "youtube"
+	youtubeDefaultMaxHeight = 1080
+	youtubeUA               = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
 )
+
+// youtubeMaxHeight is the per-command video height cap, set from
+// --max-height (default 1080).
+var youtubeMaxHeight = youtubeDefaultMaxHeight
 
 var (
 	youTubeURLRe = regexp.MustCompile(`(?i)(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})`)
