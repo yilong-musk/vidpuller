@@ -25,6 +25,8 @@
   `--force` 可强制重下。
 - **无水印**：直接使用平台提供或当前会话签发的播放地址，不做去水印处理。
 - **统一输入**：任何脚本、服务或手工文件都能生成时间线 JSON，不依赖特定上游或 SDK。
+- **不下载也能取元信息**：`vidpuller info <url>` 输出平台无关的 JSON（标题、作者、
+  ID、时长、分辨率、发布时间、封面、分 P），支持 B 站、YouTube 和 TikTok。
 - **单二进制**：静态链接（`CGO_ENABLED=0`），无第三方 Go 依赖。
 - **机器可读进度**：`--progress` 向 stderr 输出 `PROGRESS <0-100>` 行，便于调用方解析。
 
@@ -106,6 +108,10 @@ vidpuller download '<timeline-url>' --ids 1234567890123456789,123456789012345679
 # 只列条目
 vidpuller list '<timeline-url>' -n 20
 
+# 只取元信息（JSON，不下载）
+vidpuller info 'https://www.bilibili.com/video/BV1xxxxxxxxx'
+vidpuller info 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
 # 单条 TikTok（支持 vt.tiktok.com 短链）
 vidpuller get 'https://www.tiktok.com/@<handle>/video/7000000000000000001'
 
@@ -168,7 +174,8 @@ downloads/
 ## 已知限制
 
 - **抖音单条链接不支持**：详情接口需要浏览器签名（`a_bogus`），纯 HTTP 拿不到
-  无水印直链；要下某一条，用 `download --ids <video_id>`。
+  无水印直链或元信息；要下某一条，用 `download --ids <video_id>`，或从时间线
+  JSON 里读取该条目。
 - TikTok 图文帖没有 `play_url`，会被跳过（封面仍可从时间线获取）。
 - **YouTube** 默认 1080p；需要更高画质时用 `--max-height 1440` 或
   `--max-height 2160`（文件可能有几百 MB）。年龄限制、DRM 或地区限制的视频可能

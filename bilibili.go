@@ -38,16 +38,19 @@ var (
 type biliView struct {
 	BVID     string `json:"bvid"`
 	Title    string `json:"title"`
+	Desc     string `json:"desc"`
 	Pic      string `json:"pic"`
 	Duration int    `json:"duration"`
 	Pubdate  int64  `json:"pubdate"`
 	Owner    struct {
+		MID  int64  `json:"mid"`
 		Name string `json:"name"`
 	} `json:"owner"`
 	Pages []struct {
-		CID  int64  `json:"cid"`
-		Page int    `json:"page"`
-		Part string `json:"part"`
+		CID      int64  `json:"cid"`
+		Page     int    `json:"page"`
+		Part     string `json:"part"`
+		Duration int64  `json:"duration"`
 	} `json:"pages"`
 }
 
