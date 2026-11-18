@@ -69,6 +69,18 @@
 BV 号或 B 站视频页地址 > YouTube 地址 > 时间线 URL > 媒体直链域名。都匹配不上时
 命令直接报错，不会默认成某个平台。条目逐条携带 `platform` 时，支持混合平台时间线。
 
+## 安装
+
+Linux、macOS、Windows（amd64/arm64）的静态二进制随每个
+[release](https://github.com/yilong-musk/vidpuller/releases) 发布。下载对应平台
+的压缩包，用 `checksums.txt` 校验后把 `vidpuller` 放进 `PATH`。
+
+已有 Go 工具链（1.27+）时：
+
+```bash
+go install github.com/yilong-musk/vidpuller@latest
+```
+
 ## 前置
 
 - 构建需要 Go 1.27+。

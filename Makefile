@@ -1,12 +1,14 @@
 BINARY := vidpuller
 GO     ?= go
+VERSION := $(shell git describe --tags --always 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X main.version=$(VERSION)
 
 .PHONY: all build test vet fmt lang check install clean
 
 all: check build
 
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o $(BINARY) .
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) .
 
 test:
 	$(GO) test ./...
