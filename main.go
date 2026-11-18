@@ -16,6 +16,7 @@ func usage() {
 Usage:
   vidpuller download <timeline-url|file>   download items from a timeline
   vidpuller get <video-url>                download one video (TikTok / Bilibili / YouTube)
+  vidpuller info <video-url>               print metadata as JSON (no download)
   vidpuller list <timeline-url|file>       list items without downloading
   vidpuller version
 
@@ -48,6 +49,9 @@ download options:
 get options:
   -o, --out DIR        output root (default ./downloads)
       --force          re-download an item that is already recorded
+
+info options:
+      --cookies FILE   login cookies, used by the metadata fetch
 
 list options:
   -n, --limit N        list at most N items (0 = all)
@@ -214,6 +218,8 @@ func main() {
 		os.Exit(runDownload(os.Args[2:]))
 	case "get":
 		os.Exit(runGet(os.Args[2:]))
+	case "info":
+		os.Exit(runInfo(os.Args[2:]))
 	case "list":
 		os.Exit(runList(os.Args[2:]))
 	case "version", "-v", "--version":

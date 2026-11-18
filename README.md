@@ -29,6 +29,9 @@ is built in; the default ceiling is 1080p and `--max-height` raises it to
   by the current session; no watermark removal step.
 - **One input format**: any script, service or hand-written file can produce
   the timeline JSON; no provider SDK or specific upstream is required.
+- **Metadata without downloading**: `vidpuller info <url>` prints a
+  platform-neutral JSON object (title, author, IDs, duration, dimensions,
+  publish date, cover, parts) for Bilibili, YouTube and TikTok.
 - **Single binary**: statically linked (`CGO_ENABLED=0`), no third-party Go
   dependencies.
 - **Machine-readable progress**: `--progress` writes `PROGRESS <0-100>` lines
@@ -116,6 +119,10 @@ vidpuller download '<timeline-url>' --ids 1234567890123456789,123456789012345679
 # List items
 vidpuller list '<timeline-url>' -n 20
 
+# Metadata only (JSON, no download)
+vidpuller info 'https://www.bilibili.com/video/BV1xxxxxxxxx'
+vidpuller info 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
 # One TikTok video (vt.tiktok.com short links are supported)
 vidpuller get 'https://www.tiktok.com/@<handle>/video/7000000000000000001'
 
@@ -187,7 +194,8 @@ only kept for reference.
 
 - **Douyin single-video URLs are not supported**: the detail endpoint requires
   a browser signature (`a_bogus`), and pure HTTP cannot obtain a watermark-free
-  stream. Use `download --ids <video_id>` instead.
+  stream or metadata. Use `download --ids <video_id>`, or read the item from a
+  timeline JSON.
 - TikTok image posts have no `play_url` and are skipped (the cover can still be
   fetched from the timeline).
 - **YouTube** defaults to 1080p; pass `--max-height 1440` or `--max-height

@@ -82,12 +82,13 @@ type ytPlayer struct {
 		Formats         []ytFormat `json:"formats"`
 	} `json:"streamingData"`
 	VideoDetails struct {
-		VideoID       string `json:"videoId"`
-		Title         string `json:"title"`
-		Author        string `json:"author"`
-		ChannelID     string `json:"channelId"`
-		LengthSeconds string `json:"lengthSeconds"`
-		Thumbnail     struct {
+		VideoID          string `json:"videoId"`
+		Title            string `json:"title"`
+		Author           string `json:"author"`
+		ChannelID        string `json:"channelId"`
+		LengthSeconds    string `json:"lengthSeconds"`
+		ShortDescription string `json:"shortDescription"`
+		Thumbnail        struct {
 			Thumbnails []ytThumbnail `json:"thumbnails"`
 		} `json:"thumbnail"`
 	} `json:"videoDetails"`
