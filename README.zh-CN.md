@@ -13,9 +13,9 @@
 
 | 平台 | 内容 | 单条链接 | 时间线 |
 |---|---|---|---|
-| 抖音 | 创作者视频 | 不支持（需要浏览器签名） | 支持 |
-| TikTok | 视频 | 支持（`get`） | 支持 |
-| B 站 | 视频与分 P | 支持（`get`） | 支持（DASH + ffmpeg） |
+| <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="抖音">&nbsp;抖音 | 创作者视频 | 不支持（需要浏览器签名） | 支持 |
+| <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | 视频 | 支持（`get`） | 支持 |
+| <img src="docs/assets/bilibili.png" width="18" height="18" align="absmiddle" alt="哔哩哔哩">&nbsp;B 站 | 视频与分 P | 支持（`get`） | 支持（DASH + ffmpeg） |
 
 ## 特性
 

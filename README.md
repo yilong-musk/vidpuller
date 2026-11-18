@@ -14,9 +14,9 @@ not a single `require` in `go.mod`).
 
 | Platform | Content | Single URL | Timeline |
 |---|---|---|---|
-| Douyin | Creator videos | No (needs a browser signature) | Yes |
-| TikTok | Videos | Yes (`get`) | Yes |
-| Bilibili | Videos and pages | Yes (`get`) | Yes (DASH + ffmpeg) |
+| <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="Douyin">&nbsp;Douyin | Creator videos | No (needs a browser signature) | Yes |
+| <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | Videos | Yes (`get`) | Yes |
+| <img src="docs/assets/bilibili.png" width="18" height="18" align="absmiddle" alt="Bilibili">&nbsp;Bilibili | Videos and pages | Yes (`get`) | Yes (DASH + ffmpeg) |
 
 ## Features
 
