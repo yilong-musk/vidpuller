@@ -17,17 +17,20 @@ import (
 	"time"
 )
 
-// TikTok 的网页在 Slardar WAF 后面：第一次响应是 ~1.4KB 的挑战页，
-// <p id="cs"> 的 class 是 base64 JSON（v.a = seed，v.c = 目标摘要）。
-// 找到 i 使 sha256(seed || i) 等于目标，把 d 拼回原 JSON（保持字段顺序），
-// 再 base64 成 _wafchallengeid cookie 重试即可。纯标准库，不用浏览器。
+// TikTok pages sit behind the Slardar WAF: the first response is a ~1.4 KB
+// challenge page, and <p id="cs"> carries base64 JSON whose v.a is the seed
+// and v.c is the target digest. Find i such that sha256(seed || i) matches
+// the target, append d to the original JSON while preserving field order,
+// base64-encode the result as the _wafchallengeid cookie, and retry. This
+// needs only the standard library, not a browser.
 var (
 	reChallengeCS   = regexp.MustCompile(`(?s)<p[^>]*\bid="cs"[^>]*\bclass="([^"]+)"`)
 	reChallengeName = regexp.MustCompile(`(?s)<p[^>]*\bid="wci"[^>]*\bclass="([^"]+)"`)
 	reUniversalData = regexp.MustCompile(`(?s)<script[^>]*\bid="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)</script>`)
 )
 
-// flexInt64 兼容 TikTok 的两种写法：数字 1794753620 和字符串 "1794753620"。
+// flexInt64 accepts both TikTok encodings: the number 1794753620 and the
+// string "1794753620".
 type flexInt64 int64
 
 func (f *flexInt64) UnmarshalJSON(b []byte) error {
@@ -44,10 +47,11 @@ func (f *flexInt64) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// sessionCookies 是 --cookies 注入的会话 cookie（登录后可拿到更高画质档位）。
+// sessionCookies holds cookies injected by --cookies; a logged-in session can
+// unlock higher quality renditions.
 var sessionCookies []*http.Cookie
 
-// applySessionCookies 把 --cookies 的条目塞进 client 的 jar。
+// applySessionCookies adds the --cookies entries to the client's jar.
 func applySessionCookies(client *http.Client) {
 	if len(sessionCookies) == 0 || client.Jar == nil {
 		return
@@ -59,7 +63,8 @@ func applySessionCookies(client *http.Client) {
 	client.Jar.SetCookies(base, sessionCookies)
 }
 
-// videoDetail 是单条视频解析结果，字段与时间线条目的通用字段对齐。
+// videoDetail is the result of resolving one video; its fields align with the
+// generic timeline item fields.
 type videoDetail struct {
 	Author     string
 	Nickname   string
@@ -70,16 +75,17 @@ type videoDetail struct {
 	Height     int
 	IsTop      int
 	PlayURL    string
-	AudioURL   string // B 站 DASH 音频流（TikTok/抖音不用）
+	AudioURL   string // Bilibili DASH audio stream (unused for TikTok/Douyin)
 	CoverURL   string
-	Quality    string      // 选中档位的人类可读描述，如 "1080p bytevc1 1037kbps"
-	Renditions []rendition // 服务端下发的全部档位（由高到低处理）
+	Quality    string      // human-readable selected rendition, e.g. "1080p bytevc1 1037kbps"
+	Renditions []rendition // all renditions served, processed high to low
 	secUID     string
 	id         string
 }
 
-// rendition 是一个可下载的画质档位。分辨率优先从 UrlKey 解析
-// （形如 v12044gd…_bytevc1_1080p_1037801），比 PlayAddr 的 Width/Height 可靠。
+// rendition is one downloadable quality level. Resolution is parsed from
+// UrlKey first (e.g. v12044gd…_bytevc1_1080p_1037801), which is more reliable
+// than PlayAddr's Width/Height.
 type rendition struct {
 	Gear    string
 	URLKey  string
@@ -90,15 +96,15 @@ type rendition struct {
 	URL     string
 }
 
-// runGet 执行 get 子命令（目前只支持 TikTok）。
+// runGet executes the get subcommand (TikTok or Bilibili).
 func runGet(args []string) int {
 	o, pos, err := parseOptions(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "参数错误:", err)
+		fmt.Fprintln(os.Stderr, "argument error:", err)
 		return 2
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(os.Stderr, "用法: vidpuller get <TikTok 视频链接> [参数]")
+		fmt.Fprintln(os.Stderr, "usage: vidpuller get <video-url> [options]")
 		return 2
 	}
 	if o.progress {
@@ -107,7 +113,7 @@ func runGet(args []string) int {
 	if o.cookies != "" {
 		cks, err := loadCookieFile(o.cookies)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "读取 cookie 失败:", err)
+			fmt.Fprintln(os.Stderr, "read cookies:", err)
 			return 2
 		}
 		sessionCookies = cks
@@ -116,43 +122,43 @@ func runGet(args []string) int {
 	if bvid, part := extractBVID(target); bvid != "" {
 		det, err := fetchBilibili(bvid, part, sessionCookies)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "解析失败:", err)
+			fmt.Fprintln(os.Stderr, "resolve:", err)
 			return 1
 		}
 		it := Item{AwemeID: det.ID(), Desc: det.Desc, Author: det.secUID, PlayURL: det.PlayURL, CoverURL: det.CoverURL}
 		if !o.force {
 			st := loadState(o.out + "/" + stateFile)
 			if st.has(platformBilibili, it.AwemeID) {
-				fmt.Println("已下载过，跳过（--force 可强制）")
+				fmt.Println("already downloaded, skip (use --force to download again)")
 				return 0
 			}
 		}
 		res, err := downloadBilibiliItem(it, o.out, sessionCookies)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "下载失败:", err)
+			fmt.Fprintln(os.Stderr, "download failed:", err)
 			return 1
 		}
 		st := loadState(o.out + "/" + stateFile)
 		st.mark(platformBilibili, it, res.Video)
 		if err := st.save(o.out + "/" + stateFile); err != nil {
-			fmt.Fprintf(os.Stderr, "警告: 写入 state 失败: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: save state: %v\n", err)
 		}
 		quality := ""
 		if det.Quality != "" {
-			quality = "，" + det.Quality
+			quality = ", " + det.Quality
 		}
-		fmt.Printf("完成 %s（%s%s）\n", res.Video, humanBytes(res.Bytes), quality)
+		fmt.Printf("done %s (%s%s)\n", res.Video, humanBytes(res.Bytes), quality)
 		return 0
 	}
 	if strings.Contains(target, "douyin.com") || regexp.MustCompile(`^\d{15,}$`).MatchString(target) {
-		fmt.Fprintln(os.Stderr, "抖音单条需要浏览器签名，纯 HTTP 拿不到无水印直链。")
-		fmt.Fprintln(os.Stderr, "请改用: vidpuller download <timeline-url> --ids <aweme_id>")
+		fmt.Fprintln(os.Stderr, "Douyin single-video URLs need a browser signature; pure HTTP cannot obtain a watermark-free stream.")
+		fmt.Fprintln(os.Stderr, "Use: vidpuller download <timeline-url> --ids <aweme_id>")
 		return 2
 	}
 
 	det, client, err := fetchTikTokVideo(target)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "解析失败:", err)
+		fmt.Fprintln(os.Stderr, "resolve:", err)
 		return 1
 	}
 	it := Item{
@@ -168,41 +174,43 @@ func runGet(args []string) int {
 		CoverURL:   det.CoverURL,
 	}
 	if it.PlayURL == "" {
-		fmt.Fprintln(os.Stderr, "这条没有视频直链（可能是图文帖）")
+		fmt.Fprintln(os.Stderr, "no video URL (possibly an image post)")
 		return 1
 	}
 	if !o.force {
 		st := loadState(o.out + "/" + stateFile)
 		if st.has(platformTikTok, it.AwemeID) {
-			fmt.Println("已下载过，跳过（--force 可强制）")
+			fmt.Println("already downloaded, skip (use --force to download again)")
 			return 0
 		}
 	}
 	fmt.Printf("[tiktok] %s  %s\n", it.AwemeID, truncate(it.Desc, 50))
 	res, err := downloadItem(it, platformTikTok, o.out, client)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "下载失败:", err)
+		fmt.Fprintln(os.Stderr, "download failed:", err)
 		return 1
 	}
 	st := loadState(o.out + "/" + stateFile)
 	st.mark(platformTikTok, it, res.Video)
 	if err := st.save(o.out + "/" + stateFile); err != nil {
-		fmt.Fprintf(os.Stderr, "警告: 写入增量账本失败: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: save state: %v\n", err)
 	}
 	quality := ""
 	if det.Quality != "" {
-		quality = "，" + det.Quality
+		quality = ", " + det.Quality
 	}
-	fmt.Printf("完成 %s（%s%s）\n", res.Video, humanBytes(res.Bytes), quality)
+	fmt.Printf("done %s (%s%s)\n", res.Video, humanBytes(res.Bytes), quality)
 	return 0
 }
 
-// ID 从页面 URL 或详情里取 aweme_id；详情结构里不带 id 时回退到 URL。
+// ID returns the aweme_id from the page URL or detail payload; when the
+// detail payload has no id, the URL is used.
 func (d videoDetail) ID() string { return d.id }
 
-// resolveTikTokPlayURL 用已有会话打开视频页，取当前会话签发的直链。
-// 上游给的 play_url 是它自己的会话签发的，换一个 cookie jar 下载会 403，
-// 所以批量模式要按作者/视频重新解析一次。
+// resolveTikTokPlayURL opens the video page with an existing session and
+// returns a play URL signed by that session. The play_url from upstream is
+// tied to its own cookie jar and returns 403 when downloaded with another, so
+// batch mode re-resolves once per video.
 func resolveTikTokPlayURL(client *http.Client, author, id string) (videoDetail, *http.Client, error) {
 	pageURL := "https://www.tiktok.com/@" + url.PathEscape(author) + "/video/" + id
 	if client != nil {
@@ -217,13 +225,13 @@ func resolveTikTokPlayURL(client *http.Client, author, id string) (videoDetail, 
 	return fetchTikTokVideo(pageURL)
 }
 
-// tiktokSessionFor 用作者主页建立一次带 cookie 的会话。
-// TikTok 的 CDN 直链要求 ttwid/msToken/tt_chain_token，缺了就是 403，
-// 批量下载时每个作者只需要建一次。
+// tiktokSessionFor creates one cookie-bearing session from the author's
+// profile. TikTok CDN URLs require ttwid/msToken/tt_chain_token and return
+// 403 without them; batch mode only needs one session per author.
 func tiktokSessionFor(author string) (*http.Client, error) {
 	author = strings.TrimPrefix(strings.TrimSpace(author), "@")
 	if author == "" {
-		return nil, fmt.Errorf("缺少作者 handle，无法建立 TikTok 会话")
+		return nil, fmt.Errorf("missing author handle; cannot create a TikTok session")
 	}
 	_, client, err := fetchTikTokPage("https://www.tiktok.com/@" + url.PathEscape(author))
 	if err != nil {
@@ -232,9 +240,10 @@ func tiktokSessionFor(author string) (*http.Client, error) {
 	return client, nil
 }
 
-// fetchTikTokVideo 打开视频页（自动解 WAF），解析 webapp.video-detail。
-// 返回的 client 带着这一轮的 cookie（ttwid/msToken/tt_chain_token），
-// 下载直链时必须复用，否则 CDN 会回 403。
+// fetchTikTokVideo opens a video page (solving the WAF when needed) and parses
+// webapp.video-detail. The returned client carries this round's cookies
+// (ttwid/msToken/tt_chain_token) and must be reused for the download, or the
+// CDN returns 403.
 func fetchTikTokVideo(target string) (videoDetail, *http.Client, error) {
 	var det videoDetail
 	pageURL, err := resolveTikTokURL(target)
@@ -249,22 +258,22 @@ func fetchTikTokVideo(target string) (videoDetail, *http.Client, error) {
 	return det, client, err
 }
 
-// parseTikTokVideoPage 从已取到的 HTML 里解析视频详情。
+// parseTikTokVideoPage parses video details from already-fetched HTML.
 func parseTikTokVideoPage(body, pageURL string) (videoDetail, error) {
 	var det videoDetail
 	m := reUniversalData.FindStringSubmatch(body)
 	if m == nil {
-		return det, fmt.Errorf("页面里没有 __UNIVERSAL_DATA_FOR_REHYDRATION__")
+		return det, fmt.Errorf("page has no __UNIVERSAL_DATA_FOR_REHYDRATION__")
 	}
 	var data struct {
 		Scope map[string]json.RawMessage `json:"__DEFAULT_SCOPE__"`
 	}
 	if err := json.Unmarshal([]byte(m[1]), &data); err != nil {
-		return det, fmt.Errorf("页面数据解析失败: %w", err)
+		return det, fmt.Errorf("parse page data: %w", err)
 	}
 	raw, ok := data.Scope["webapp.video-detail"]
 	if !ok {
-		return det, fmt.Errorf("页面里没有视频详情（链接失效或需要登录）")
+		return det, fmt.Errorf("page has no video details (expired link or login required)")
 	}
 	var vd struct {
 		StatusCode int `json:"statusCode"`
@@ -300,10 +309,10 @@ func parseTikTokVideoPage(body, pageURL string) (videoDetail, error) {
 		} `json:"itemInfo"`
 	}
 	if err := json.Unmarshal(raw, &vd); err != nil {
-		return det, fmt.Errorf("视频详情解析失败: %w", err)
+		return det, fmt.Errorf("parse video details: %w", err)
 	}
 	if vd.StatusCode != 0 {
-		return det, fmt.Errorf("TikTok 拒绝访问（statusCode=%d）：可能是地区限制或私密内容", vd.StatusCode)
+		return det, fmt.Errorf("TikTok denied access (statusCode=%d): region-restricted or private content", vd.StatusCode)
 	}
 	is := vd.ItemInfo.ItemStruct
 	rends := make([]rendition, 0, len(is.Video.BitrateInfo))
@@ -346,15 +355,15 @@ func parseTikTokVideoPage(body, pageURL string) (videoDetail, error) {
 		det.id = awemeIDFromURL(pageURL)
 	}
 	if det.id == "" {
-		return det, fmt.Errorf("拿不到视频 ID")
+		return det, fmt.Errorf("could not determine video ID")
 	}
 	return det, nil
 }
 
-// urlKeyRe 匹配 v12044gd…_<codec>_<height>p_<bitrate>。
+// urlKeyRe matches v12044gd…_<codec>_<height>p_<bitrate>.
 var urlKeyRe = regexp.MustCompile(`_([a-z0-9]+)_(\d+)p_(\d+)$`)
 
-// parseURLKey 从 UrlKey 里取出 codec 与真实高度。
+// parseURLKey extracts the codec and real height from UrlKey.
 func parseURLKey(key string) (codec string, height int, ok bool) {
 	m := urlKeyRe.FindStringSubmatch(key)
 	if m == nil {
@@ -367,8 +376,8 @@ func parseURLKey(key string) (codec string, height int, ok bool) {
 	return m[1], h, true
 }
 
-// pickBestRendition 选分辨率最高、同分辨率下码率最高的档位；
-// 全部没有 URL 时回退到 video.playAddr。
+// pickBestRendition chooses the highest resolution, breaking ties by bitrate;
+// when no rendition has a URL, it falls back to video.playAddr.
 func pickBestRendition(rends []rendition, fallback string) (string, string) {
 	best := rendition{}
 	for _, r := range rends {
@@ -392,9 +401,6 @@ func pickBestRendition(rends []rendition, fallback string) (string, string) {
 	return best.URL, quality
 }
 
-// resolveTikTokPlayURL 用已有会话打开视频页，取当前会话签发的直链。
-// 上游给的 play_url 是它自己的会话签发的，换一个 cookie jar 下载会 403，
-// 所以批量模式要按作者/视频重新解析一次。
 var awemeIDRe = regexp.MustCompile(`/video/(\d{15,})`)
 
 func awemeIDFromURL(u string) string {
@@ -404,13 +410,13 @@ func awemeIDFromURL(u string) string {
 	return ""
 }
 
-// resolveTikTokURL 把 vt.tiktok.com 短链跟随到最终视频页。
+// resolveTikTokURL follows a vt.tiktok.com short link to the final video page.
 func resolveTikTokURL(target string) (string, error) {
 	if awemeIDFromURL(target) != "" {
 		return target, nil
 	}
 	if !strings.Contains(target, "tiktok.com") {
-		return "", fmt.Errorf("不是 TikTok 链接: %s", target)
+		return "", fmt.Errorf("not a TikTok URL: %s", target)
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, target, nil)
@@ -425,12 +431,13 @@ func resolveTikTokURL(target string) (string, error) {
 	defer resp.Body.Close()
 	final := resp.Request.URL.String()
 	if awemeIDFromURL(final) == "" {
-		return "", fmt.Errorf("短链没有解析到视频页: %s", final)
+		return "", fmt.Errorf("short link did not resolve to a video page: %s", final)
 	}
 	return final, nil
 }
 
-// fetchTikTokPage 取页面；遇到 WAF 挑战就解一次再重试。
+// fetchTikTokPage fetches a page, solving the WAF challenge once and retrying
+// when needed.
 func fetchTikTokPage(target string) (string, *http.Client, error) {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, Timeout: 40 * time.Second}
@@ -456,7 +463,7 @@ func fetchTikTokPage(target string) (string, *http.Client, error) {
 		return "", nil, err
 	}
 	if !reUniversalData.MatchString(body) {
-		return "", nil, fmt.Errorf("挑战已解但页面仍被拦截（%d 字节）", len(body))
+		return "", nil, fmt.Errorf("challenge solved but page is still blocked (%d bytes)", len(body))
 	}
 	return body, client, nil
 }
@@ -481,11 +488,11 @@ func getPage(client *http.Client, target string) (string, error) {
 	return string(data), nil
 }
 
-// solveWAFChallenge 返回 (cookie 名, cookie 值)。
+// solveWAFChallenge returns (cookie name, cookie value).
 func solveWAFChallenge(page string) (string, string, error) {
 	m := reChallengeCS.FindStringSubmatch(page)
 	if m == nil {
-		return "", "", fmt.Errorf("页面上没有找到 WAF 挑战数据")
+		return "", "", fmt.Errorf("no WAF challenge data on the page")
 	}
 	raw := decodeB64(m[1])
 	var ch struct {
@@ -495,11 +502,11 @@ func solveWAFChallenge(page string) (string, string, error) {
 		} `json:"v"`
 	}
 	if err := json.Unmarshal(raw, &ch); err != nil {
-		return "", "", fmt.Errorf("挑战数据解析失败: %w", err)
+		return "", "", fmt.Errorf("parse challenge data: %w", err)
 	}
 	seed, want := decodeB64(ch.V.A), decodeB64(ch.V.C)
 	if len(seed) == 0 || len(want) != sha256.Size {
-		return "", "", fmt.Errorf("挑战数据不完整")
+		return "", "", fmt.Errorf("challenge data is incomplete")
 	}
 	answer := -1
 	for i := 0; i <= 1_000_000; i++ {
@@ -512,14 +519,15 @@ func solveWAFChallenge(page string) (string, string, error) {
 		}
 	}
 	if answer < 0 {
-		return "", "", fmt.Errorf("挑战无解")
+		return "", "", fmt.Errorf("challenge has no solution")
 	}
-	// 拼回原 JSON 并保留字段顺序，否则 cookie 值不对。
+	// Reassemble the original JSON while preserving field order; otherwise
+	// the cookie value is wrong.
 	text := strings.TrimSuffix(strings.TrimSpace(string(raw)), "}") +
 		`,"d":"` + base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(answer))) + `"}`
 	nameM := reChallengeName.FindStringSubmatch(page)
 	if nameM == nil || nameM[1] == "" {
-		return "", "", fmt.Errorf("挑战 cookie 名缺失")
+		return "", "", fmt.Errorf("challenge cookie name is missing")
 	}
 	return nameM[1], base64.StdEncoding.EncodeToString([]byte(text)), nil
 }

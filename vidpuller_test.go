@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// testChallenge 构造一个答案已知的 WAF 挑战页。
+// testChallenge builds a WAF challenge page with a known answer.
 func testChallenge(answer int) string {
 	seed := []byte("vidpuller-seed")
 	digest := sha256.Sum256(append(seed, []byte(fmt.Sprint(answer))...))
@@ -33,7 +33,7 @@ func TestSolveWAFChallenge(t *testing.T) {
 		t.Fatal(err)
 	}
 	if name != "_wafchallengeid" {
-		t.Fatalf("cookie 名 = %q", name)
+		t.Fatalf("cookie name = %q", name)
 	}
 	raw, err := base64.StdEncoding.DecodeString(val)
 	if err != nil {
@@ -46,16 +46,16 @@ func TestSolveWAFChallenge(t *testing.T) {
 	d, _ := decoded["d"].(string)
 	plain, _ := base64.StdEncoding.DecodeString(d)
 	if string(plain) != "11" {
-		t.Fatalf("d = %q, 期望答案 11", plain)
+		t.Fatalf("d = %q, want answer 11", plain)
 	}
 	if !strings.HasPrefix(string(raw), `{"v":`) {
-		t.Fatalf("字段顺序被改变: %s", raw)
+		t.Fatalf("field order changed: %s", raw)
 	}
 }
 
 func TestSolveWAFChallengeRejectsGarbage(t *testing.T) {
 	if _, _, err := solveWAFChallenge("<html>nothing</html>"); err == nil {
-		t.Fatal("应该报错")
+		t.Fatal("expected an error")
 	}
 }
 
@@ -96,13 +96,13 @@ func TestParseTikTokVideoPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if det.ID() != "7000000000000000001" || det.Author != "nasa" || det.Desc != "test caption" {
-		t.Fatalf("详情 = %+v", det)
+		t.Fatalf("detail = %+v", det)
 	}
 	if det.PlayURL != "https://cdn/1080p.mp4" {
-		t.Fatalf("playURL = %q，应取最高码率", det.PlayURL)
+		t.Fatalf("playURL = %q, want the highest bitrate", det.PlayURL)
 	}
 	if det.CoverURL != "https://cdn/origin.jpg" || det.DurationMS != 79000 {
-		t.Fatalf("媒体字段 = %+v", det)
+		t.Fatalf("media fields = %+v", det)
 	}
 	if det.CreateTime != 1794753620 {
 		t.Fatalf("createTime = %d", det.CreateTime)
@@ -113,7 +113,7 @@ func TestParseTikTokVideoPageError(t *testing.T) {
 	bad := `{"__DEFAULT_SCOPE__":{"webapp.video-detail":{"statusCode":10204}}}`
 	page := `<html><script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">` + bad + `</script></html>`
 	if _, err := parseTikTokVideoPage(page, "https://www.tiktok.com/@x/video/1"); err == nil {
-		t.Fatal("statusCode 非 0 应该报错")
+		t.Fatal("non-zero statusCode should return an error")
 	}
 }
 
@@ -133,18 +133,18 @@ func TestLoadTimelineFromFile(t *testing.T) {
 		t.Fatalf("timeline = %+v", tl)
 	}
 	if tl.Items[0].AwemeID != "3" {
-		t.Fatalf("没有按时间倒序: %+v", tl.Items)
+		t.Fatalf("not sorted newest-first: %+v", tl.Items)
 	}
 }
 
 func TestLoadTimelineBadInput(t *testing.T) {
 	if _, err := loadTimeline(filepath.Join(t.TempDir(), "missing.json")); err == nil {
-		t.Fatal("不存在的文件应该报错")
+		t.Fatal("a missing file should return an error")
 	}
 	path := filepath.Join(t.TempDir(), "bad.json")
 	os.WriteFile(path, []byte(`{"nope":1}`), 0o644)
 	if _, err := loadTimeline(path); err == nil {
-		t.Fatal("没有 items 应该报错")
+		t.Fatal("a timeline without items should return an error")
 	}
 }
 
@@ -165,7 +165,7 @@ func TestDetectPlatform(t *testing.T) {
 	for _, tc := range cases {
 		tl := &Timeline{Source: tc.source}
 		if got := detectPlatform(tl, tc.src, tc.override); got != tc.want {
-			t.Fatalf("%+v -> %q, 期望 %q", tc, got, tc.want)
+			t.Fatalf("%+v -> %q, want %q", tc, got, tc.want)
 		}
 	}
 }
@@ -178,16 +178,16 @@ func TestSelectItems(t *testing.T) {
 	}}
 	got := selectItems(tl, options{limit: 2})
 	if len(got) != 2 || got[0].AwemeID != "1" {
-		t.Fatalf("limit 过滤 = %+v", got)
+		t.Fatalf("limit filter = %+v", got)
 	}
 	got = selectItems(tl, options{ids: []string{"2"}})
 	if len(got) != 1 || got[0].AwemeID != "2" {
-		t.Fatalf("ids 过滤 = %+v", got)
+		t.Fatalf("ids filter = %+v", got)
 	}
 	since := time.Unix(150, 0)
 	got = selectItems(tl, options{since: since})
 	if len(got) != 2 || got[0].AwemeID != "2" {
-		t.Fatalf("since 过滤 = %+v", got)
+		t.Fatalf("since filter = %+v", got)
 	}
 }
 
@@ -196,26 +196,26 @@ func TestStateLegacyDouyinKeys(t *testing.T) {
 		"123": {Path: "old.mp4"},
 	}}
 	if !st.has(platformDouyin, "123") {
-		t.Fatal("旧账本的裸 id 应该按抖音命中")
+		t.Fatal("legacy bare IDs should match as Douyin")
 	}
 	if st.has(platformTikTok, "123") {
-		t.Fatal("TikTok 不应该命中旧抖音键")
+		t.Fatal("TikTok must not match a legacy Douyin key")
 	}
 	st.mark(platformDouyin, Item{AwemeID: "456", Desc: "t"}, "/tmp/456.mp4")
 	if !st.has(platformDouyin, "456") {
-		t.Fatal("mark 之后应该命中")
+		t.Fatal("mark should make the item match")
 	}
 }
 
 func TestSafeName(t *testing.T) {
 	cases := map[string]string{
-		"a/b:c*d?e":  "a_b：c_d？e",
-		"  多   空格  ": "多 空格",
-		"":           "untitled",
+		"a/b:c*d?e":         "a_b_c_d_e",
+		"  many   spaces  ": "many spaces",
+		"":                  "untitled",
 	}
 	for in, want := range cases {
 		if got := safeName(in); got != want {
-			t.Fatalf("safeName(%q) = %q, 期望 %q", in, got, want)
+			t.Fatalf("safeName(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -239,10 +239,10 @@ func TestDownloadFileWritesAtomically(t *testing.T) {
 	}
 	data, err := os.ReadFile(dest)
 	if err != nil || string(data) != "video-bytes" {
-		t.Fatalf("内容 = %q, err = %v", data, err)
+		t.Fatalf("content = %q, err = %v", data, err)
 	}
 	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
-		t.Fatal(".part 应该被改名掉")
+		t.Fatal(".part should have been renamed")
 	}
 }
 
@@ -252,7 +252,7 @@ func TestDownloadFileHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 	if _, err := downloadFile(srv.URL, filepath.Join(t.TempDir(), "b.mp4"), "", nil); err == nil {
-		t.Fatal("403 应该报错")
+		t.Fatal("403 should return an error")
 	}
 }
 
@@ -270,18 +270,18 @@ func TestDownloadItemWritesThreeFiles(t *testing.T) {
 	defer srv.Close()
 
 	out := t.TempDir()
-	it := Item{AwemeID: "42", Desc: "标题/带斜杠", Author: "nasa", PlayURL: srv.URL + "/v.mp4", CoverURL: srv.URL + "/c.jpg", CreateTime: 100}
+	it := Item{AwemeID: "42", Desc: "title/with slash", Author: "nasa", PlayURL: srv.URL + "/v.mp4", CoverURL: srv.URL + "/c.jpg", CreateTime: 100}
 	res, err := downloadItem(it, platformTikTok, out, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{res.Video, res.Cover, res.Meta} {
 		if _, err := os.Stat(p); err != nil {
-			t.Fatalf("缺少文件 %s: %v", p, err)
+			t.Fatalf("missing file %s: %v", p, err)
 		}
 	}
 	if !strings.Contains(res.Video, filepath.Join("tiktok", "nasa")) {
-		t.Fatalf("路径 = %s", res.Video)
+		t.Fatalf("path = %s", res.Video)
 	}
 	var meta struct {
 		Platform string `json:"platform"`
@@ -292,11 +292,12 @@ func TestDownloadItemWritesThreeFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if meta.Platform != "tiktok" || meta.Item.AwemeID != "42" {
-		t.Fatalf("元数据 = %+v", meta)
+		t.Fatalf("metadata = %+v", meta)
 	}
 }
 
-// 确认编译期没有外部模块依赖（本文件导入的 context 只用于测试占位）。
+// Verify at compile time that there are no external module dependencies
+// (the context import in this file is only a test placeholder).
 var _ = context.Background
 
 func TestParseURLKey(t *testing.T) {
@@ -334,7 +335,7 @@ func TestPickBestRenditionPrefersResolutionThenBitrate(t *testing.T) {
 	if quality != "1080p bytevc1 1037kbps" {
 		t.Fatalf("quality = %q", quality)
 	}
-	// 同分辨率时选码率更高的那个
+	// At the same resolution, pick the higher bitrate.
 	only720 := []rendition{
 		{Codec: "bytevc1", Height: 720, Bitrate: 275802, URL: "https://cdn/low.mp4"},
 		{Codec: "h264", Height: 720, Bitrate: 490821, URL: "https://cdn/high.mp4"},
@@ -405,14 +406,14 @@ func TestPickBiliVideoPrefersQualityThenAVC(t *testing.T) {
 		{ID: 80, CodeCID: 12, Height: 1080, Bandwidth: 3123018, BaseURL: "https://cdn/1080hevc.m4s"},
 		{ID: 112, CodeCID: 7, Height: 1080, Bandwidth: 5085196, BaseURL: "https://cdn/1080avc.m4s"},
 		{ID: 112, CodeCID: 12, Height: 1080, Bandwidth: 3261002, BaseURL: "https://cdn/1080hevc2.m4s"},
-		{ID: 120, CodeCID: 7, Height: 2160, Bandwidth: 0, BaseURL: ""}, // 无地址，跳过
+		{ID: 120, CodeCID: 7, Height: 2160, Bandwidth: 0, BaseURL: ""}, // no URL, skip
 		{ID: 80, CodeCID: 7, Height: 1080, Bandwidth: 999, BackupURL: []string{"https://cdn/backup.m4s"}},
 	}
 	best := pickBiliVideo(streams)
 	if best == nil || best.BaseURL != "https://cdn/1080avc.m4s" {
 		t.Fatalf("pickBiliVideo = %+v", best)
 	}
-	// 同清晰度：AVC 优先于 HEVC，即使 HEVC 码率更高
+	// At the same quality: AVC wins over HEVC even when HEVC has a higher bitrate.
 	only := []biliStream{
 		{ID: 80, CodeCID: 12, Height: 1080, Bandwidth: 9000, BaseURL: "https://cdn/hevc.m4s"},
 		{ID: 80, CodeCID: 7, Height: 1080, Bandwidth: 1000, BaseURL: "https://cdn/avc.m4s"},
@@ -494,7 +495,8 @@ func TestPlatformPerItem(t *testing.T) {
 	if label := platformLabel(tl, tl.Items, "timeline.json", ""); label != "mixed" {
 		t.Fatalf("label = %q", label)
 	}
-	// 没有顶层 source、也没有逐条 platform 时，BV 号应能被识别成 B 站。
+	// With no top-level source and no per-item platform, a BV ID should be
+	// detected as Bilibili.
 	if p := platformForItem(&Timeline{}, Item{VideoID: "BV1xxxxxxxxx"}, "timeline.json", ""); p != platformBilibili {
 		t.Fatalf("bvid inference = %q", p)
 	}
@@ -521,7 +523,7 @@ func TestLoadTimelineShapes(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(tl.Items) != tc.want {
-				t.Fatalf("items = %d, 期望 %d", len(tl.Items), tc.want)
+				t.Fatalf("items = %d, want %d", len(tl.Items), tc.want)
 			}
 		})
 	}
@@ -529,8 +531,8 @@ func TestLoadTimelineShapes(t *testing.T) {
 
 func TestNormalizeBilibiliTimeline(t *testing.T) {
 	raw := `{"user":"123456789","title":"UP on Bilibili","items":[
-		{"id":"BV1xxxxxxxxx","title":"简餐","url":"https://www.bilibili.com/video/BV1xxxxxxxxx",
-		 "author":"测试作者","images":["https://i2.hdslb.com/cover.jpg"],"created_at":"2026-11-17T02:30:00Z"}
+		{"id":"BV1xxxxxxxxx","title":"lunch","url":"https://www.bilibili.com/video/BV1xxxxxxxxx",
+		 "author":"test author","images":["https://i2.hdslb.com/cover.jpg"],"created_at":"2026-11-17T02:30:00Z"}
 	]}`
 	var tl Timeline
 	if err := json.Unmarshal([]byte(raw), &tl); err != nil {
@@ -538,7 +540,7 @@ func TestNormalizeBilibiliTimeline(t *testing.T) {
 	}
 	normalizeItems(&tl)
 	it := tl.Items[0]
-	if it.AwemeID != "BV1xxxxxxxxx" || it.VideoID != "BV1xxxxxxxxx" || it.Desc != "简餐" || it.CoverURL != "https://i2.hdslb.com/cover.jpg" {
+	if it.AwemeID != "BV1xxxxxxxxx" || it.VideoID != "BV1xxxxxxxxx" || it.Desc != "lunch" || it.CoverURL != "https://i2.hdslb.com/cover.jpg" {
 		t.Fatalf("normalized item = %+v", it)
 	}
 	if it.CreateTime != 1794882600 {

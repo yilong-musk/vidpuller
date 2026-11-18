@@ -1,141 +1,191 @@
 # vidpuller
 
-抖音 / TikTok / B 站视频下载器（Go，单二进制，零第三方依赖）。
+[![CI](https://github.com/yilong-musk/vidpuller/actions/workflows/ci.yml/badge.svg)](https://github.com/yilong-musk/vidpuller/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-输入是一份平台无关的 JSON 时间线（本地文件或任意 HTTP 地址）。工具只做三件事：
-解析时间线、下载无水印直链、按「平台 + 作品 ID」增量去重。它不依赖任何特定的
-抓取服务，也不要求时间线来自某个项目——任何脚本、服务或手工文件，只要按下面的
-格式输出 JSON 即可。
+English | [Chinese (Simplified)](README.zh-CN.md)
 
-## 输入格式
+Downloads videos from Douyin, TikTok and Bilibili from a platform-neutral JSON
+timeline — self-contained, one static binary, standard library only (there is
+not a single `require` in `go.mod`).
 
-顶层可以是 `{ "items": [...] }`，也可以直接是条目数组 `[...]`；`data` 可作为
-`items` 的别名（适配常见 API 包装）。下面是一个完整例子：
+## Supported platforms
+
+| Platform | Content | Single URL | Timeline |
+|---|---|---|---|
+| Douyin | Creator videos | No (needs a browser signature) | Yes |
+| TikTok | Videos | Yes (`get`) | Yes |
+| Bilibili | Videos and pages | Yes (`get`) | Yes (DASH + ffmpeg) |
+
+## Features
+
+- **Incremental**: a `.state.json` ledger keyed by `platform:id` skips anything
+  already downloaded; `--force` re-downloads.
+- **Watermark-free**: uses the play URLs supplied by the platform or generated
+  by the current session; no watermark removal step.
+- **One input format**: any script, service or hand-written file can produce
+  the timeline JSON; no provider SDK or specific upstream is required.
+- **Single binary**: statically linked (`CGO_ENABLED=0`), no third-party Go
+  dependencies.
+- **Machine-readable progress**: `--progress` writes `PROGRESS <0-100>` lines
+  to stderr for callers to parse.
+
+## Input format
+
+The top level can be `{ "items": [...] }`, a bare array `[...]`, or an object
+using `data` as the alias for `items`. A complete example:
 
 ```json
 {
   "platform": "douyin",
-  "author": "作者名",
+  "author": "creator",
   "items": [
     {
-      "video_id": "作品 ID",
-      "title": "标题 / 文案",
+      "video_id": "1234567890123456789",
+      "title": "Example title",
       "url": "https://example.com/video/123",
       "play_url": "https://example.com/video.mp4",
       "cover_url": "https://example.com/cover.jpg",
       "published_at": "2026-01-02T03:04:05Z",
-      "author": "作者名"
+      "author": "creator"
     }
   ]
 }
 ```
 
-字段说明：
-
-| 字段 | 必填 | 说明 |
+| Field | Required | Description |
 |---|---|---|
-| `items` / `data` | 是 | 条目数组；顶层也可直接是数组，`data` 是 `items` 的别名 |
-| `platform` / `source` | 否 | `douyin` / `tiktok` / `bilibili`；也可以逐条写在 `item.platform` |
-| `video_id` | 是 | 通用作品 ID；兼容别名 `aweme_id`（抖音/TikTok）、`id`（B 站 BV 号） |
-| `title` / `desc` | 否 | 标题；两者都接受，输出文件名用 `title`/`desc` |
-| `url` | 否 | 视频页地址；B 站可只给 BV 号，也可以给完整链接 |
-| `play_url` | 否 | 直链；抖音必须提供，TikTok 会重新解析，B 站不需要 |
-| `cover_url` / `images` | 否 | 封面；`images` 取第一张 |
-| `published_at` / `create_time` | 否 | 发布时间；RFC3339 字符串或 Unix 秒都接受 |
-| `author` | 否 | 作者名，仅用于输出目录和展示 |
+| `items` / `data` | Yes | Item array; the top level may also be a bare array |
+| `platform` / `source` | No | `douyin`, `tiktok` or `bilibili`; can also be set per item |
+| `video_id` | Yes | Canonical video ID; aliases: `aweme_id` (Douyin/TikTok), `id` (Bilibili BV ID) |
+| `title` / `desc` | No | Title; both are accepted and used in the output filename |
+| `url` | No | Video page URL; Bilibili accepts a BV ID alone or a full URL |
+| `play_url` | No | Direct media URL; required for Douyin, re-resolved for TikTok, unused for Bilibili |
+| `cover_url` / `images` | No | Cover image; `images[0]` is used when `cover_url` is absent |
+| `published_at` / `create_time` | No | Publish time; RFC 3339 strings or Unix seconds |
+| `author` | No | Author name, used for the output directory and display |
 
-平台识别顺序：`--platform` > 条目 `platform` > 顶层 `platform`/`source` > BV 号或
-B 站视频页地址 > 时间线 URL 里的平台名 > 媒体直链域名。混合平台时间线可以逐条指定
-`platform`，下载会按条目路由；都匹配不上时会报错，不会默认成某个平台。
+Platform detection order: `--platform` > per-item `platform` > top-level
+`platform`/`source` > BV ID or Bilibili page URL > timeline URL > media URL
+hosts. If no rule matches, the command fails instead of guessing a platform.
+Mixed-platform timelines are supported when each item carries `platform`.
 
-## 前置
+## Requirements
 
-- B 站下载需要系统里有 `ffmpeg`（DASH 音视频流要合并）。
-- 时间线由调用方准备（抓取、签名、登录态都归调用方）；本工具只消费 JSON。
-- 抖音单条链接不支持：详情接口需要浏览器签名，纯 HTTP 拿不到无水印直链；
-  要下某一条，用 `download --ids <video_id>`。
+- Go 1.27+ to build.
+- `ffmpeg` on `PATH` for Bilibili downloads (DASH audio and video are merged).
+- Optional cookies for higher quality: TikTok may serve 720p anonymously and
+  1080p with a logged-in session; Bilibili unlocks 1080p+ with `SESSDATA`.
 
-## 用法
+## Quick start
 
 ```bash
-make build              # 生成 ./vidpuller
-make install            # 装到 ~/.local/bin/vidpuller
+git clone https://github.com/yilong-musk/vidpuller.git
+cd vidpuller
 
-# 本地时间线
+make check        # gofmt + vet + tests + language check
+make install      # installs to ~/.local/bin/vidpuller
+vidpuller version
+```
+
+## Usage
+
+```bash
+# Local timeline
 vidpuller download ./timeline.json -n 5
 
-# 远程时间线（平台自动识别）
+# Remote timeline (platform detected from the JSON or URL)
 vidpuller download 'https://example.com/timeline.json' -n 5
 
-# 平台识别不出来时显式指定
+# Explicit platform when the timeline has no hint
 vidpuller download ./timeline.json --platform douyin -n 5
 
-# 只看看要下什么
+# Inspect before downloading
 vidpuller download '<timeline-url>' -n 10 --dry-run
 
-# 只下指定作品
+# Only specific items
 vidpuller download '<timeline-url>' --ids 1234567890123456789,1234567890123456790
 
-# 只列条目
+# List items
 vidpuller list '<timeline-url>' -n 20
 
-# 单条 TikTok（支持 vt.tiktok.com 短链）
+# One TikTok video (vt.tiktok.com short links are supported)
 vidpuller get 'https://www.tiktok.com/@<handle>/video/7000000000000000001'
 
-# B 站：按时间线批量下载（mp4 直接可看）
+# Bilibili with cookies
 vidpuller download '<bilibili-timeline-url>' -n 3 \
   --cookies ~/cookies/bilibili.txt
 
-# 单条 B 站（BV 号或完整链接，?p=N 指定分 P）
+# One Bilibili video (BV ID or full URL; ?p=N selects a page)
 vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
 ```
 
-## 参数
+## Options
 
-| 参数 | 说明 |
+| Option | Description |
 |---|---|
-| `-o, --out DIR` | 输出根目录，默认 `./downloads` |
-| `-n, --limit N` | 最多下载 N 条（已下载跳过的不计数；0=不限） |
-| `--since YYYY-MM-DD` | 只下该日期之后发布的 |
-| `--ids A,B` | 只下指定作品 ID（`video_id` / `aweme_id`） |
-| `--dry-run` | 只打印，不下载 |
-| `--force` | 已下载过也重新下载 |
-| `--interval DUR` | 每条间隔，默认 `3s` |
-| `--platform douyin\|tiktok\|bilibili` | 覆盖平台自动识别 |
-| `--cookies FILE` | 登录 cookie（Netscape / JSON / `k=v; k=v`）：TikTok 提画质、B 站解锁 1080p+ |
+| `-o, --out DIR` | Output root, default `./downloads` |
+| `-n, --limit N` | Download at most N items (already-downloaded items do not count; 0 = unlimited) |
+| `--since YYYY-MM-DD` | Only items published on or after this date |
+| `--ids A,B` | Only the given video IDs (`video_id` / `aweme_id`) |
+| `--dry-run` | Print what would be downloaded |
+| `--force` | Re-download items that are already recorded |
+| `--interval DUR` | Delay between items, default `3s` |
+| `--platform douyin\|tiktok\|bilibili` | Override platform detection |
+| `--cookies FILE` | Login cookies (Netscape / JSON / `k=v; k=v`) |
+| `--progress` | Write `PROGRESS <0-100>` lines to stderr |
 
-## 产物
+## Output
 
 ```
 downloads/
-  douyin/<作者>/<video_id>_<标题>.mp4|.jpg|.json
-  tiktok/<作者>/<video_id>_<标题>.mp4|.jpg|.json
-  bilibili/<作者>/<video_id>_<标题>.mp4|.jpg|.json
-  .state.json            增量账本（键 = platform:id）
+  douyin/<author>/<video_id>_<title>.mp4|.jpg|.json
+  tiktok/<author>/<video_id>_<title>.mp4|.jpg|.json
+  bilibili/<author>/<video_id>_<title>.mp4|.jpg|.json
+  .state.json            incremental ledger (key = platform:id)
 ```
 
-`.json` 里是时间线的原始条目（`play_url` 有时效，只作记录）。
+The `.json` file is the original timeline item; `play_url` may expire and is
+only kept for reference.
 
-## 实现要点
+## Implementation notes
 
-- **抖音**：`play_url` 直接可下（带 `Referer: https://www.douyin.com/`）。
-- **TikTok**：CDN 直链绑定签发它的会话 cookie（`ttwid`/`msToken`/`tt_chain_token`），
-  所以批量下载时每条都会用当前会话重新解析一次视频页的直链，而不是直接用
-  时间线里的 `play_url`——用别的 cookie jar 下载那个 URL 会 403。
-- TikTok 的 WAF 是 SHA-256 工作量证明，纯标准库解（无需浏览器）；单条 `get`
-  自带这一步。
-- **画质选择**：解析每个档位的 `UrlKey`（形如 `…_bytevc1_1080p_1037801`）
-  取真实 codec 与分辨率，按「分辨率优先、同分辨率比码率」选最高档，
-  下载结果会打印实际档位（如 `1080p bytevc1 722kbps`）。
-- **上限由服务端决定**：未登录时 TikTok 对同一条视频可能只下发 720p，
-  也可能给 1080p（同一视频不同时段实测会变）。带 `--cookies` 登录后
-  通常会解锁更高档位，但本项目不内置账号，需要自己导出 cookie。
+- **Douyin**: `play_url` is downloaded directly with
+  `Referer: https://www.douyin.com/`.
+- **TikTok**: CDN URLs are bound to the session that signed them
+  (`ttwid`/`msToken`/`tt_chain_token`), so batch downloads re-resolve each
+  video's URL with the current session; reusing an upstream URL with a
+  different cookie jar returns 403.
+- TikTok's WAF is a SHA-256 proof of work solved with the standard library; no
+  browser is required.
+- **Quality selection**: each rendition's `UrlKey` (for example
+  `…_bytevc1_1080p_1037801`) provides the real codec and resolution; the
+  highest resolution wins, with bitrate as the tie-breaker. The downloaded
+  quality is printed (for example `1080p bytevc1 722kbps`).
+- **Bilibili**: `view` provides the cid, `playurl` provides DASH streams, and
+  `ffmpeg -c copy` merges them. A mirror host is tried first for Akamai URLs,
+  with the original CDN as fallback.
 
-## 已知限制
+## Limitations
 
-- **抖音单条链接不支持**：`aweme/v1/web/aweme/detail` 需要浏览器签名
-  （a_bogus），纯 HTTP 拿不到无水印直链；分享页的 `video_layout` 也是空的。
-  要下某一条，用 `download --ids <video_id>`。
-- TikTok 的图文帖没有 `play_url`，会被跳过（封面仍可在时间线里取到）。
-- 私密 / 地区限制内容由时间线数据决定，本工具看不到被上游省略的条目。
-- 时间线的抓取、签名与登录态由调用方负责，本工具只消费 JSON。
+- **Douyin single-video URLs are not supported**: the detail endpoint requires
+  a browser signature (`a_bogus`), and pure HTTP cannot obtain a watermark-free
+  stream. Use `download --ids <video_id>` instead.
+- TikTok image posts have no `play_url` and are skipped (the cover can still be
+  fetched from the timeline).
+- Private or region-restricted content is reported as an error by the platform;
+  the tool cannot see what the timeline data does not include.
+- Timeline collection, signing and login state are the caller's
+  responsibility; this tool only consumes the JSON.
+
+## Documentation
+
+- **[Chinese (Simplified)](README.zh-CN.md)**: this README in Simplified
+  Chinese; the English page remains the source of truth.
+- **[AGENTS.md](AGENTS.md)**: repository constraints, including the
+  English-only rule and the merge policy.
+
+## License
+
+[MIT](LICENSE)
