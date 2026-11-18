@@ -12,7 +12,7 @@ not a single `require` in `go.mod`).
 
 ## Supported platforms
 
-| Platform | Content | Single URL | Timeline |
+| Platform&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Content | Single URL | Timeline |
 |---|---|---|---|
 | <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="Douyin">&nbsp;Douyin | Creator videos | No (needs a browser signature) | Yes |
 | <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | Videos | Yes (`get`) | Yes |
