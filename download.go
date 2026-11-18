@@ -35,6 +35,7 @@ func runDownload(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: vidpuller download <timeline-url|file> [options]")
 		return 2
 	}
+	youtubeMaxHeight = o.maxHeight
 	if o.progress {
 		reportProgress = func(f float64) { fmt.Fprintf(os.Stderr, "PROGRESS %.1f\n", f*100) }
 	}

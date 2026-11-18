@@ -107,6 +107,7 @@ func runGet(args []string) int {
 		fmt.Fprintln(os.Stderr, "usage: vidpuller get <video-url> [options]")
 		return 2
 	}
+	youtubeMaxHeight = o.maxHeight
 	if o.progress {
 		reportProgress = func(f float64) { fmt.Fprintf(os.Stderr, "PROGRESS %.1f\n", f*100) }
 	}

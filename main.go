@@ -40,6 +40,7 @@ download options:
       --force          re-download items that are already recorded
       --interval DUR   delay between items (default 3s)
       --platform NAME  override platform detection (douyin|tiktok|bilibili|youtube)
+      --max-height N   maximum YouTube height (default 1080; e.g. 1440, 2160)
       --cookies FILE   login cookies (Netscape / JSON / "k=v; k=v"); raises
                        TikTok quality and unlocks Bilibili 1080p+
       --progress       write progress lines to stderr (PROGRESS <0-100>)
@@ -56,7 +57,8 @@ Douyin single-video URLs are not supported: the detail endpoint requires a
 browser signature and pure HTTP cannot obtain a watermark-free stream. Use
 download + --ids, or put the item in a timeline JSON.
 
-YouTube downloads use the built-in InnerTube extractor (up to 1080p).
+YouTube downloads use the built-in InnerTube extractor (default up to 1080p;
+use --max-height 1440 or 2160 for higher quality).
 
 Output: <out>/<platform>/<author>/<video_id>_<title>.mp4 + .jpg + .json
 State:  <out>/.state.json (dedup key: platform:id)
@@ -65,24 +67,25 @@ State:  <out>/.state.json (dedup key: platform:id)
 
 // options holds the parsed flags shared by all subcommands.
 type options struct {
-	out      string
-	limit    int
-	since    time.Time
-	ids      []string
-	dryRun   bool
-	force    bool
-	quiet    bool
-	interval time.Duration
-	platform string
-	cookies  string
-	progress bool
+	out       string
+	limit     int
+	since     time.Time
+	ids       []string
+	dryRun    bool
+	force     bool
+	quiet     bool
+	interval  time.Duration
+	platform  string
+	maxHeight int
+	cookies   string
+	progress  bool
 }
 
 // parseOptions is a hand-written parser: the standard flag package stops at
 // the first positional argument, while this tool accepts both
 // `vidpuller download URL -n 5` and `-n 5 URL`.
 func parseOptions(args []string) (options, []string, error) {
-	o := options{out: "./downloads", interval: 3 * time.Second}
+	o := options{out: "./downloads", interval: 3 * time.Second, maxHeight: youtubeDefaultMaxHeight}
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -156,6 +159,16 @@ func parseOptions(args []string) (options, []string, error) {
 				return o, nil, fmt.Errorf("invalid --platform: %q (douyin|tiktok|bilibili|youtube)", v)
 			}
 			o.platform, i = v, next
+		case "--max-height":
+			v, next, err := flagValue(inline, hasInline, args, i)
+			if err != nil {
+				return o, nil, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 144 || n > 4320 {
+				return o, nil, fmt.Errorf("invalid --max-height: %q (144-4320)", v)
+			}
+			o.maxHeight, i = n, next
 		case "--dry-run":
 			o.dryRun = true
 		case "--force":
