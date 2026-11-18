@@ -117,6 +117,13 @@ func normalizeItems(tl *Timeline) {
 		if it.AwemeID == "" && it.BVID != "" {
 			it.AwemeID = it.BVID
 		}
+		if it.AwemeID == "" {
+			if id := extractYouTubeID(it.VideoID); id != "" {
+				it.AwemeID = id
+			} else if id := extractYouTubeID(it.URL); id != "" {
+				it.AwemeID = id
+			}
+		}
 		if it.VideoID == "" && it.AwemeID != "" {
 			it.VideoID = it.AwemeID
 		}
@@ -166,7 +173,7 @@ func fetchURL(url string) (string, error) {
 // value.
 func normalizePlatform(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case platformDouyin, platformTikTok, platformBilibili:
+	case platformDouyin, platformTikTok, platformBilibili, platformYouTube:
 		return strings.ToLower(strings.TrimSpace(s))
 	}
 	return ""
@@ -189,6 +196,8 @@ func platformFromSource(src string) string {
 		return platformTikTok
 	case strings.Contains(lower, "/bilibili/") || strings.Contains(lower, "bilibili.com"):
 		return platformBilibili
+	case strings.Contains(lower, "youtube.com/") || strings.Contains(lower, "youtu.be/"):
+		return platformYouTube
 	}
 	return ""
 }
@@ -199,6 +208,9 @@ func platformFromItem(it Item, src string) string {
 	if isBVID(it.BVID) || isBVID(it.VideoID) || isBVID(it.AwemeID) ||
 		strings.Contains(strings.ToLower(it.URL), "bilibili.com") {
 		return platformBilibili
+	}
+	if isYouTubeURL(it.URL) {
+		return platformYouTube
 	}
 	if p := platformFromSource(src); p != "" {
 		return p

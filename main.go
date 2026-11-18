@@ -11,11 +11,11 @@ import (
 const version = "0.1.0"
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `vidpuller %s — multi-platform video downloader (Douyin / TikTok / Bilibili)
+	fmt.Fprintf(os.Stderr, `vidpuller %s — multi-platform video downloader (Douyin / TikTok / Bilibili / YouTube)
 
 Usage:
   vidpuller download <timeline-url|file>   download items from a timeline
-  vidpuller get <video-url>                download one video (TikTok / Bilibili)
+  vidpuller get <video-url>                download one video (TikTok / Bilibili / YouTube)
   vidpuller list <timeline-url|file>       list items without downloading
   vidpuller version
 
@@ -39,9 +39,10 @@ download options:
       --dry-run        print what would be downloaded
       --force          re-download items that are already recorded
       --interval DUR   delay between items (default 3s)
-      --platform NAME  override platform detection (douyin|tiktok|bilibili)
+      --platform NAME  override platform detection (douyin|tiktok|bilibili|youtube)
       --cookies FILE   login cookies (Netscape / JSON / "k=v; k=v"); raises
-                       TikTok quality and unlocks Bilibili 1080p+
+                       TikTok quality, unlocks Bilibili 1080p+, and is
+                       forwarded to yt-dlp for YouTube
       --progress       write progress lines to stderr (PROGRESS <0-100>)
 
 get options:
@@ -55,6 +56,8 @@ list options:
 Douyin single-video URLs are not supported: the detail endpoint requires a
 browser signature and pure HTTP cannot obtain a watermark-free stream. Use
 download + --ids, or put the item in a timeline JSON.
+
+YouTube downloads require yt-dlp on PATH, or YT_DLP_BIN pointing at it.
 
 Output: <out>/<platform>/<author>/<video_id>_<title>.mp4 + .jpg + .json
 State:  <out>/.state.json (dedup key: platform:id)
@@ -150,8 +153,8 @@ func parseOptions(args []string) (options, []string, error) {
 			if err != nil {
 				return o, nil, err
 			}
-			if v != platformDouyin && v != platformTikTok && v != platformBilibili {
-				return o, nil, fmt.Errorf("invalid --platform: %q (douyin|tiktok|bilibili)", v)
+			if v != platformDouyin && v != platformTikTok && v != platformBilibili && v != platformYouTube {
+				return o, nil, fmt.Errorf("invalid --platform: %q (douyin|tiktok|bilibili|youtube)", v)
 			}
 			o.platform, i = v, next
 		case "--dry-run":

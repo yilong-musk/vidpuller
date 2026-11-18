@@ -6,8 +6,9 @@
 
 [English](README.md) | 简体中文
 
-从抖音、TikTok 和 B 站下载视频，输入是一份平台无关的 JSON 时间线 —— 自包含、
-单个静态二进制、只用标准库（`go.mod` 里没有任何 `require`）。
+从抖音、TikTok、B 站和 YouTube 下载视频，输入是一份平台无关的 JSON 时间线 ——
+自包含、单个静态二进制、只用标准库（`go.mod` 里没有任何 `require`）。YouTube
+的解析委托给外部 `yt-dlp`。
 
 ## 支持的平台
 
@@ -16,6 +17,7 @@
 | <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="抖音">&nbsp;抖音 | 创作者视频 | 不支持（需要浏览器签名） | 支持 |
 | <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | 视频 | 支持（`get`） | 支持 |
 | <img src="docs/assets/bilibili.png" width="18" height="18" align="absmiddle" alt="哔哩哔哩">&nbsp;B 站 | 视频与分 P | 支持（`get`） | 支持（DASH + ffmpeg） |
+| <img src="docs/assets/youtube.png" width="18" height="18" align="absmiddle" alt="YouTube">&nbsp;YouTube | 视频 | 支持（`get`） | 支持（yt-dlp + ffmpeg） |
 
 ## 特性
 
@@ -52,7 +54,7 @@
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `items` / `data` | 是 | 条目数组；顶层也可直接是数组 |
-| `platform` / `source` | 否 | `douyin` / `tiktok` / `bilibili`；也可逐条写在 `item.platform` |
+| `platform` / `source` | 否 | `douyin` / `tiktok` / `bilibili` / `youtube`；也可逐条写在 `item.platform` |
 | `video_id` | 是 | 通用作品 ID；兼容别名 `aweme_id`（抖音/TikTok）、`id`（B 站 BV 号） |
 | `title` / `desc` | 否 | 标题；两者都接受，输出文件名使用其中之一 |
 | `url` | 否 | 视频页地址；B 站可只给 BV 号，也可给完整链接 |
@@ -62,15 +64,17 @@
 | `author` | 否 | 作者名，用于输出目录和展示 |
 
 平台识别顺序：`--platform` > 条目 `platform` > 顶层 `platform`/`source` >
-BV 号或 B 站视频页地址 > 时间线 URL > 媒体直链域名。都匹配不上时命令直接报错，
-不会默认成某个平台。条目逐条携带 `platform` 时，支持混合平台时间线。
+BV 号或 B 站视频页地址 > YouTube 地址 > 时间线 URL > 媒体直链域名。都匹配不上时
+命令直接报错，不会默认成某个平台。条目逐条携带 `platform` 时，支持混合平台时间线。
 
 ## 前置
 
 - 构建需要 Go 1.27+。
 - B 站下载需要系统里有 `ffmpeg`（DASH 音视频流要合并）。
+- YouTube 下载需要系统里有 `yt-dlp`（或设置 `YT_DLP_BIN`）。
 - 可选 cookie 提升画质：TikTok 未登录可能只有 720p，登录后可到 1080p；
-  B 站带 `SESSDATA` 可解锁 1080p+。
+  B 站带 `SESSDATA` 可解锁 1080p+；YouTube 的 `--cookies` 会透传给 yt-dlp
+  （Netscape 格式）。
 
 ## 快速开始
 
@@ -113,6 +117,9 @@ vidpuller download '<bilibili-timeline-url>' -n 3 \
 
 # 单条 B 站（BV 号或完整链接，?p=N 指定分 P）
 vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
+
+# 单条 YouTube（需要 yt-dlp）
+vidpuller get 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
 
 ## 参数
@@ -126,7 +133,7 @@ vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
 | `--dry-run` | 只打印，不下载 |
 | `--force` | 已下载过也重新下载 |
 | `--interval DUR` | 每条间隔，默认 `3s` |
-| `--platform douyin\|tiktok\|bilibili` | 覆盖平台自动识别 |
+| `--platform douyin\|tiktok\|bilibili\|youtube` | 覆盖平台自动识别 |
 | `--cookies FILE` | 登录 cookie（Netscape / JSON / `k=v; k=v`） |
 | `--progress` | 向 stderr 输出 `PROGRESS <0-100>` 行 |
 
@@ -137,6 +144,7 @@ downloads/
   douyin/<作者>/<video_id>_<标题>.mp4|.jpg|.json
   tiktok/<作者>/<video_id>_<标题>.mp4|.jpg|.json
   bilibili/<作者>/<video_id>_<标题>.mp4|.jpg|.json
+  youtube/<作者>/<video_id>_<标题>.mp4|.jpg|.json
   .state.json            增量账本（键 = platform:id）
 ```
 
@@ -154,12 +162,17 @@ downloads/
   （如 `1080p bytevc1 722kbps`）。
 - **B 站**：`view` 取 cid，`playurl` 取 DASH 流，`ffmpeg -c copy` 合并；Akamai
   地址优先走镜像，失败时回退原始 CDN。
+- **YouTube**：委托给 `yt-dlp` 处理签名与 JavaScript 解析，Go 侧负责输出布局和
+  进度。默认格式选择器为 `bv*+ba/b`；可用 `YT_DLP_FORMAT` 覆盖，例如
+  `wv*+wa/w` 取最小文件。
 
 ## 已知限制
 
 - **抖音单条链接不支持**：详情接口需要浏览器签名（`a_bogus`），纯 HTTP 拿不到
   无水印直链；要下某一条，用 `download --ids <video_id>`。
 - TikTok 图文帖没有 `play_url`，会被跳过（封面仍可从时间线获取）。
+- **YouTube** 依赖 `yt-dlp`；年龄限制、DRM 或地区限制的视频可能需要 cookie，
+  也可能无法下载。不展开播放列表或频道时间线，只接受单条视频地址。
 - 私密或地区限制内容由平台报错；时间线里没有的条目，本工具也看不到。
 - 时间线的抓取、签名与登录态由调用方负责，本工具只消费 JSON。
 

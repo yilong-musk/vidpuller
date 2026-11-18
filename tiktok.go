@@ -117,6 +117,7 @@ func runGet(args []string) int {
 			return 2
 		}
 		sessionCookies = cks
+		youtubeCookieFile = o.cookies
 	}
 	target := pos[0]
 	if bvid, part := extractBVID(target); bvid != "" {
@@ -154,6 +155,34 @@ func runGet(args []string) int {
 		fmt.Fprintln(os.Stderr, "Douyin single-video URLs need a browser signature; pure HTTP cannot obtain a watermark-free stream.")
 		fmt.Fprintln(os.Stderr, "Use: vidpuller download <timeline-url> --ids <aweme_id>")
 		return 2
+	}
+
+	if id := extractYouTubeID(target); id != "" {
+		it := Item{VideoID: id, AwemeID: id, URL: target}
+		if !o.force {
+			st := loadState(o.out + "/" + stateFile)
+			if st.has(platformYouTube, it.AwemeID) {
+				fmt.Println("already downloaded, skip (use --force to download again)")
+				return 0
+			}
+		}
+		fmt.Printf("[youtube] %s\n", it.AwemeID)
+		res, err := downloadYouTubeItem(it, o.out, youtubeCookieFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "download failed:", err)
+			return 1
+		}
+		st := loadState(o.out + "/" + stateFile)
+		st.mark(platformYouTube, it, res.Video)
+		if err := st.save(o.out + "/" + stateFile); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: save state: %v\n", err)
+		}
+		quality := ""
+		if res.Quality != "" {
+			quality = ", " + res.Quality
+		}
+		fmt.Printf("done %s (%s%s)\n", res.Video, humanBytes(res.Bytes), quality)
+		return 0
 	}
 
 	det, client, err := fetchTikTokVideo(target)
