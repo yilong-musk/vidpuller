@@ -6,9 +6,10 @@
 
 English | [Chinese (Simplified)](README.zh-CN.md)
 
-Downloads videos from Douyin, TikTok and Bilibili from a platform-neutral JSON
-timeline — self-contained, one static binary, standard library only (there is
-not a single `require` in `go.mod`).
+Downloads videos from Douyin, TikTok, Bilibili and YouTube from a
+platform-neutral JSON timeline — self-contained, one static binary, standard
+library only (there is not a single `require` in `go.mod`). YouTube extraction
+is delegated to the external `yt-dlp` tool.
 
 ## Supported platforms
 
@@ -17,6 +18,7 @@ not a single `require` in `go.mod`).
 | <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="Douyin">&nbsp;Douyin | Creator videos | No (needs a browser signature) | Yes |
 | <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | Videos | Yes (`get`) | Yes |
 | <img src="docs/assets/bilibili.png" width="18" height="18" align="absmiddle" alt="Bilibili">&nbsp;Bilibili | Videos and pages | Yes (`get`) | Yes (DASH + ffmpeg) |
+| <img src="docs/assets/youtube.png" width="18" height="18" align="absmiddle" alt="YouTube">&nbsp;YouTube | Videos | Yes (`get`) | Yes (yt-dlp + ffmpeg) |
 
 ## Features
 
@@ -57,7 +59,7 @@ using `data` as the alias for `items`. A complete example:
 | Field | Required | Description |
 |---|---|---|
 | `items` / `data` | Yes | Item array; the top level may also be a bare array |
-| `platform` / `source` | No | `douyin`, `tiktok` or `bilibili`; can also be set per item |
+| `platform` / `source` | No | `douyin`, `tiktok`, `bilibili` or `youtube`; can also be set per item |
 | `video_id` | Yes | Canonical video ID; aliases: `aweme_id` (Douyin/TikTok), `id` (Bilibili BV ID) |
 | `title` / `desc` | No | Title; both are accepted and used in the output filename |
 | `url` | No | Video page URL; Bilibili accepts a BV ID alone or a full URL |
@@ -67,16 +69,19 @@ using `data` as the alias for `items`. A complete example:
 | `author` | No | Author name, used for the output directory and display |
 
 Platform detection order: `--platform` > per-item `platform` > top-level
-`platform`/`source` > BV ID or Bilibili page URL > timeline URL > media URL
-hosts. If no rule matches, the command fails instead of guessing a platform.
-Mixed-platform timelines are supported when each item carries `platform`.
+`platform`/`source` > BV ID or Bilibili page URL > YouTube URL > timeline URL >
+media URL hosts. If no rule matches, the command fails instead of guessing a
+platform. Mixed-platform timelines are supported when each item carries
+`platform`.
 
 ## Requirements
 
 - Go 1.27+ to build.
 - `ffmpeg` on `PATH` for Bilibili downloads (DASH audio and video are merged).
+- `yt-dlp` on `PATH` (or `YT_DLP_BIN`) for YouTube downloads.
 - Optional cookies for higher quality: TikTok may serve 720p anonymously and
   1080p with a logged-in session; Bilibili unlocks 1080p+ with `SESSDATA`.
+  For YouTube, `--cookies` is forwarded to yt-dlp (Netscape format).
 
 ## Quick start
 
@@ -119,6 +124,9 @@ vidpuller download '<bilibili-timeline-url>' -n 3 \
 
 # One Bilibili video (BV ID or full URL; ?p=N selects a page)
 vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
+
+# One YouTube video (requires yt-dlp)
+vidpuller get 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
 
 ## Options
@@ -132,7 +140,7 @@ vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
 | `--dry-run` | Print what would be downloaded |
 | `--force` | Re-download items that are already recorded |
 | `--interval DUR` | Delay between items, default `3s` |
-| `--platform douyin\|tiktok\|bilibili` | Override platform detection |
+| `--platform douyin\|tiktok\|bilibili\|youtube` | Override platform detection |
 | `--cookies FILE` | Login cookies (Netscape / JSON / `k=v; k=v`) |
 | `--progress` | Write `PROGRESS <0-100>` lines to stderr |
 
@@ -143,6 +151,7 @@ downloads/
   douyin/<author>/<video_id>_<title>.mp4|.jpg|.json
   tiktok/<author>/<video_id>_<title>.mp4|.jpg|.json
   bilibili/<author>/<video_id>_<title>.mp4|.jpg|.json
+  youtube/<author>/<video_id>_<title>.mp4|.jpg|.json
   .state.json            incremental ledger (key = platform:id)
 ```
 
@@ -166,6 +175,10 @@ only kept for reference.
 - **Bilibili**: `view` provides the cid, `playurl` provides DASH streams, and
   `ffmpeg -c copy` merges them. A mirror host is tried first for Akamai URLs,
   with the original CDN as fallback.
+- **YouTube**: delegated to `yt-dlp`, which handles signature and JavaScript
+  extraction; the Go side controls the output layout and progress. The default
+  format selector is `bv*+ba/b`; set `YT_DLP_FORMAT` to override it, for
+  example `wv*+wa/w` for the smallest file.
 
 ## Limitations
 
@@ -174,6 +187,9 @@ only kept for reference.
   stream. Use `download --ids <video_id>` instead.
 - TikTok image posts have no `play_url` and are skipped (the cover can still be
   fetched from the timeline).
+- **YouTube** requires `yt-dlp`; age-restricted, DRM-protected or
+  region-blocked videos may need cookies or may not be downloadable. Playlists
+  and channel feeds are not expanded; pass single video URLs.
 - Private or region-restricted content is reported as an error by the platform;
   the tool cannot see what the timeline data does not include.
 - Timeline collection, signing and login state are the caller's

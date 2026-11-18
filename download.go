@@ -45,6 +45,7 @@ func runDownload(args []string) int {
 			return 2
 		}
 		sessionCookies = cks
+		youtubeCookieFile = o.cookies
 	}
 	tl, err := loadTimeline(pos[0])
 	if err != nil {
@@ -53,7 +54,7 @@ func runDownload(args []string) int {
 	}
 	platform := detectPlatform(tl, pos[0], o.platform)
 	if platform == "" {
-		fmt.Fprintln(os.Stderr, "cannot determine platform: set source or platform at the top level (douyin|tiktok|bilibili), set platform per item, or pass --platform")
+		fmt.Fprintln(os.Stderr, "cannot determine platform: set source or platform at the top level (douyin|tiktok|bilibili|youtube), set platform per item, or pass --platform")
 		return 2
 	}
 	items := selectItems(tl, o)
@@ -92,7 +93,7 @@ func runDownload(args []string) int {
 			skipCount++
 			continue
 		}
-		if it.PlayURL == "" && p != platformBilibili {
+		if it.PlayURL == "" && p != platformBilibili && p != platformYouTube {
 			fmt.Printf("  [skip] %s: no video URL (image post?)\n", it.AwemeID)
 			failCount++
 			continue
@@ -225,6 +226,9 @@ type downloadResult struct {
 func downloadItem(it Item, platform, outRoot string, client *http.Client) (downloadResult, error) {
 	if platform == platformBilibili {
 		return downloadBilibiliItem(it, outRoot, sessionCookies)
+	}
+	if platform == platformYouTube {
+		return downloadYouTubeItem(it, outRoot, youtubeCookieFile)
 	}
 	var res downloadResult
 	res.Quality = it.Quality
