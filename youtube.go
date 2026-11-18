@@ -1,11 +1,14 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -14,11 +17,18 @@ import (
 	"time"
 )
 
-const platformYouTube = "youtube"
+const (
+	platformYouTube  = "youtube"
+	youtubeMaxHeight = 1080
+	youtubeUA        = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15"
+)
 
 var (
 	youTubeURLRe = regexp.MustCompile(`(?i)(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|shorts/|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})`)
 	youTubeIDRe  = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+
+	reYouTubeAPIKey  = regexp.MustCompile(`"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"`)
+	reYouTubeVisitor = regexp.MustCompile(`"VISITOR_DATA"\s*:\s*"([^"]+)"`)
 )
 
 // extractYouTubeID returns the 11-character video ID from a YouTube URL or a
@@ -40,159 +50,292 @@ func isYouTubeURL(s string) bool {
 	return strings.Contains(lower, "youtube.com/") || strings.Contains(lower, "youtu.be/")
 }
 
-// youtubeCookieFile is the --cookies path forwarded to yt-dlp.
-var youtubeCookieFile string
-
-// ytdlpBinary locates the yt-dlp executable. YT_DLP_BIN takes precedence,
-// then PATH, then ~/.local/bin (where the service user installs it).
-func ytdlpBinary() (string, error) {
-	if v := strings.TrimSpace(os.Getenv("YT_DLP_BIN")); v != "" {
-		if isExecutable(v) {
-			return v, nil
-		}
-		return "", fmt.Errorf("YT_DLP_BIN is not executable: %s", v)
-	}
-	if p, err := exec.LookPath("yt-dlp"); err == nil {
-		return p, nil
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		p := filepath.Join(home, ".local", "bin", "yt-dlp")
-		if isExecutable(p) {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("yt-dlp not found: install it, put it on PATH, or set YT_DLP_BIN")
+type ytThumbnail struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
-func isExecutable(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
+type ytFormat struct {
+	Itag            int    `json:"itag"`
+	URL             string `json:"url"`
+	SignatureCipher string `json:"signatureCipher"`
+	MimeType        string `json:"mimeType"`
+	QualityLabel    string `json:"qualityLabel"`
+	Width           int    `json:"width"`
+	Height          int    `json:"height"`
+	Bitrate         int64  `json:"bitrate"`
+	ContentLength   string `json:"contentLength"`
 }
 
-// youtubeArgs builds the yt-dlp command. The output template is resolved by
-// yt-dlp; the Go side moves the resulting mp4 into the final directory.
-func youtubeArgs(url, outDir, cookieFile string) []string {
-	format := strings.TrimSpace(os.Getenv("YT_DLP_FORMAT"))
-	if format == "" {
-		format = "bv*+ba/b"
-	}
-	args := []string{
-		"--no-playlist",
-		"--newline",
-		"--no-warnings",
-		"--progress-template", "PROGRESS %(progress._percent_str)s",
-		"-f", format,
-		"--merge-output-format", "mp4",
-		"--write-info-json",
-		"-o", filepath.Join(outDir, "%(id)s.%(ext)s"),
-	}
-	if cookieFile != "" {
-		args = append(args, "--cookies", cookieFile)
-	}
-	return append(args, url)
+type ytPlayer struct {
+	PlayabilityStatus struct {
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	} `json:"playabilityStatus"`
+	StreamingData struct {
+		AdaptiveFormats []ytFormat `json:"adaptiveFormats"`
+		Formats         []ytFormat `json:"formats"`
+	} `json:"streamingData"`
+	VideoDetails struct {
+		VideoID       string `json:"videoId"`
+		Title         string `json:"title"`
+		Author        string `json:"author"`
+		ChannelID     string `json:"channelId"`
+		LengthSeconds string `json:"lengthSeconds"`
+		Thumbnail     struct {
+			Thumbnails []ytThumbnail `json:"thumbnails"`
+		} `json:"thumbnail"`
+	} `json:"videoDetails"`
+	Microformat struct {
+		PlayerMicroformatRenderer struct {
+			PublishDate      string `json:"publishDate"`
+			OwnerChannelName string `json:"ownerChannelName"`
+		} `json:"playerMicroformatRenderer"`
+	} `json:"microformat"`
 }
 
-// parseYouTubeProgress parses a yt-dlp progress line such as
-// "PROGRESS  42.3%". Values are fractions in [0,1].
-func parseYouTubeProgress(line string) (float64, bool) {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "PROGRESS ") {
-		return 0, false
+// youtubeCredentials caches the public InnerTube key and visitor ID parsed
+// from a watch page; both are stable for the process lifetime.
+var youtubeCredentials struct {
+	sync.Mutex
+	key     string
+	visitor string
+}
+
+func youtubeHTTPClient(cookies []*http.Cookie) *http.Client {
+	jar, _ := cookiejar.New(nil)
+	if len(cookies) > 0 {
+		base, _ := url.Parse("https://www.youtube.com")
+		jar.SetCookies(base, cookies)
 	}
-	value := strings.TrimSpace(strings.TrimPrefix(line, "PROGRESS "))
-	value = strings.TrimSuffix(value, "%")
-	f, err := strconv.ParseFloat(value, 64)
+	return &http.Client{Jar: jar, Timeout: 30 * time.Second}
+}
+
+func fetchYouTubePageCreds(client *http.Client, id string) (string, string, error) {
+	youtubeCredentials.Lock()
+	defer youtubeCredentials.Unlock()
+	if youtubeCredentials.key != "" {
+		return youtubeCredentials.key, youtubeCredentials.visitor, nil
+	}
+	watchURL := "https://www.youtube.com/watch?v=" + url.QueryEscape(id) + "&hl=en&gl=US"
+	req, err := http.NewRequest(http.MethodGet, watchURL, nil)
 	if err != nil {
-		return 0, false
+		return "", "", err
 	}
-	return f / 100, true
+	req.Header.Set("User-Agent", youtubeUA)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("fetch YouTube page: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		return "", "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("YouTube page returned HTTP %d", resp.StatusCode)
+	}
+	key := ""
+	if m := reYouTubeAPIKey.FindSubmatch(body); m != nil {
+		key = string(m[1])
+	}
+	if key == "" {
+		return "", "", fmt.Errorf("YouTube page did not expose INNERTUBE_API_KEY (bot check or consent page?)")
+	}
+	visitor := ""
+	if m := reYouTubeVisitor.FindSubmatch(body); m != nil {
+		visitor = string(m[1])
+	}
+	youtubeCredentials.key, youtubeCredentials.visitor = key, visitor
+	return key, visitor, nil
 }
 
-// lineSink collects command output line by line. It keeps the last few
-// non-progress lines for error messages and forwards progress lines.
-type lineSink struct {
-	mu       sync.Mutex
-	buf      strings.Builder
-	onLine   func(string)
-	tail     []string
-	maxLines int
+// fetchYouTubePlayer asks the InnerTube player endpoint using the VISIONOS
+// client. That client exposes direct adaptive stream URLs without signature
+// ciphers or n-sig for the formats used here.
+func fetchYouTubePlayer(id string, cookies []*http.Cookie) (ytPlayer, error) {
+	var player ytPlayer
+	client := youtubeHTTPClient(cookies)
+	key, visitor, err := fetchYouTubePageCreds(client, id)
+	if err != nil {
+		return player, err
+	}
+	clientContext := map[string]any{
+		"clientName":    "VISIONOS",
+		"clientVersion": "1.02",
+		"deviceMake":    "Apple",
+		"deviceModel":   "RealityDevice17,1",
+		"userAgent":     youtubeUA,
+		"osName":        "visionOS",
+		"osVersion":     "26.5.23O471",
+		"hl":            "en",
+		"gl":            "US",
+	}
+	if visitor != "" {
+		clientContext["visitorData"] = visitor
+	}
+	payload, err := json.Marshal(map[string]any{
+		"context":        map[string]any{"client": clientContext},
+		"videoId":        id,
+		"contentCheckOk": true,
+		"racyCheckOk":    true,
+	})
+	if err != nil {
+		return player, err
+	}
+	apiURL := "https://www.youtube.com/youtubei/v1/player?key=" + url.QueryEscape(key) + "&prettyPrint=false"
+	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(payload))
+	if err != nil {
+		return player, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", youtubeUA)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Origin", "https://www.youtube.com")
+	req.Header.Set("Referer", "https://www.youtube.com/watch?v="+url.QueryEscape(id))
+	req.Header.Set("X-Youtube-Client-Name", "101")
+	req.Header.Set("X-Youtube-Client-Version", "1.02")
+	if visitor != "" {
+		req.Header.Set("X-Goog-Visitor-Id", visitor)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return player, fmt.Errorf("YouTube player request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return player, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return player, fmt.Errorf("YouTube player returned HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+	if err := json.Unmarshal(body, &player); err != nil {
+		return player, fmt.Errorf("parse YouTube player response: %w", err)
+	}
+	if player.PlayabilityStatus.Status != "OK" {
+		reason := strings.TrimSpace(player.PlayabilityStatus.Reason)
+		if reason == "" {
+			reason = player.PlayabilityStatus.Status
+		}
+		return player, fmt.Errorf("YouTube unavailable (%s): %s", player.PlayabilityStatus.Status, reason)
+	}
+	return player, nil
 }
 
-func (w *lineSink) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.buf.Write(p)
-	for {
-		text := w.buf.String()
-		i := strings.IndexByte(text, '\n')
-		if i < 0 {
-			break
+func youtubeCodec(mime string) string {
+	const marker = `codecs="`
+	i := strings.Index(mime, marker)
+	if i < 0 {
+		return ""
+	}
+	codec := mime[i+len(marker):]
+	if j := strings.IndexAny(codec, `",`); j >= 0 {
+		codec = codec[:j]
+	}
+	return strings.Split(codec, ".")[0]
+}
+
+func youtubeVideoRank(f ytFormat) int {
+	mime := strings.ToLower(f.MimeType)
+	if strings.HasPrefix(mime, "video/mp4") {
+		if strings.Contains(mime, "avc1") {
+			return 3
 		}
-		line := strings.TrimSuffix(text[:i], "\r")
-		w.buf.Reset()
-		w.buf.WriteString(text[i+1:])
-		if w.onLine != nil {
-			w.onLine(line)
+		return 2
+	}
+	if strings.HasPrefix(mime, "video/webm") {
+		return 1
+	}
+	return 0
+}
+
+func youtubeAudioRank(f ytFormat) int {
+	mime := strings.ToLower(f.MimeType)
+	if strings.HasPrefix(mime, "audio/mp4") {
+		return 2
+	}
+	if strings.HasPrefix(mime, "audio/webm") {
+		return 1
+	}
+	return 0
+}
+
+// selectYouTubeStreams picks the best video up to youtubeMaxHeight and the
+// best audio. A progressive format is returned as combined when no adaptive
+// pair exists.
+func selectYouTubeStreams(player ytPlayer) (video, audio ytFormat, combined bool, err error) {
+	all := append(append([]ytFormat{}, player.StreamingData.AdaptiveFormats...), player.StreamingData.Formats...)
+	var bestVideo, bestAudio *ytFormat
+	for i := range all {
+		f := &all[i]
+		if f.URL == "" {
+			continue
 		}
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "PROGRESS ") {
-			w.tail = append(w.tail, line)
-			if w.maxLines > 0 && len(w.tail) > w.maxLines {
-				w.tail = w.tail[len(w.tail)-w.maxLines:]
+		if strings.HasPrefix(strings.ToLower(f.MimeType), "video/") {
+			if f.Height <= 0 || f.Height > youtubeMaxHeight {
+				continue
+			}
+			if bestVideo == nil ||
+				f.Height > bestVideo.Height ||
+				(f.Height == bestVideo.Height && youtubeVideoRank(*f) > youtubeVideoRank(*bestVideo)) ||
+				(f.Height == bestVideo.Height && youtubeVideoRank(*f) == youtubeVideoRank(*bestVideo) && f.Bitrate > bestVideo.Bitrate) {
+				bestVideo = f
+			}
+		}
+		if strings.HasPrefix(strings.ToLower(f.MimeType), "audio/") {
+			if bestAudio == nil ||
+				youtubeAudioRank(*f) > youtubeAudioRank(*bestAudio) ||
+				(youtubeAudioRank(*f) == youtubeAudioRank(*bestAudio) && f.Bitrate > bestAudio.Bitrate) {
+				bestAudio = f
 			}
 		}
 	}
-	return len(p), nil
-}
-
-func (w *lineSink) lastLines() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return strings.Join(w.tail, "\n")
-}
-
-type youtubeInfo struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Uploader  string `json:"uploader"`
-	Channel   string `json:"channel"`
-	Thumbnail string `json:"thumbnail"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	VCodec    string `json:"vcodec"`
-	Format    string `json:"format"`
-	Webpage   string `json:"webpage_url"`
-}
-
-func loadYouTubeInfo(dir string) youtubeInfo {
-	var info youtubeInfo
-	paths, _ := filepath.Glob(filepath.Join(dir, "*.info.json"))
-	if len(paths) == 0 {
-		return info
+	if bestVideo != nil && bestAudio != nil {
+		return *bestVideo, *bestAudio, false, nil
 	}
-	data, err := os.ReadFile(paths[0])
-	if err != nil {
-		return info
+	// Progressive fallback: one URL that carries both video and audio.
+	for i := range player.StreamingData.Formats {
+		f := player.StreamingData.Formats[i]
+		mime := strings.ToLower(f.MimeType)
+		if f.URL == "" || !strings.HasPrefix(mime, "video/mp4") || !strings.Contains(mime, "mp4a") {
+			continue
+		}
+		if f.Height <= 0 || f.Height > youtubeMaxHeight {
+			continue
+		}
+		if video.URL == "" || f.Height > video.Height || (f.Height == video.Height && f.Bitrate > video.Bitrate) {
+			video = f
+		}
 	}
-	_ = json.Unmarshal(data, &info)
-	return info
+	if video.URL != "" {
+		return video, ytFormat{}, true, nil
+	}
+	if bestVideo == nil {
+		return video, audio, false, fmt.Errorf("no YouTube video stream up to %dp", youtubeMaxHeight)
+	}
+	if bestAudio == nil {
+		return video, audio, false, fmt.Errorf("no YouTube audio stream available")
+	}
+	return video, audio, false, fmt.Errorf("no playable YouTube stream up to %dp", youtubeMaxHeight)
 }
 
-func youtubeQuality(info youtubeInfo) string {
-	if info.Height <= 0 {
-		return strings.TrimSpace(info.Format)
+func youtubeThumbnail(player ytPlayer) string {
+	best := ""
+	bestWidth := -1
+	for _, t := range player.VideoDetails.Thumbnail.Thumbnails {
+		if t.URL != "" && t.Width > bestWidth {
+			best, bestWidth = t.URL, t.Width
+		}
 	}
-	quality := fmt.Sprintf("%dp", info.Height)
-	if codec := strings.TrimSpace(strings.Split(info.VCodec, ".")[0]); codec != "" && codec != "none" {
-		quality += " " + codec
-	}
-	return quality
+	return best
 }
 
-// downloadYouTubeItem downloads one YouTube video through yt-dlp. YouTube
-// extraction needs a full JavaScript-capable extractor, so the Go binary
-// delegates it to the external yt-dlp tool while keeping the rest of the
-// pipeline identical.
-func downloadYouTubeItem(it Item, outRoot, cookieFile string) (downloadResult, error) {
+// downloadYouTubeItem downloads one YouTube video using the native InnerTube
+// extractor and merges adaptive streams with ffmpeg.
+func downloadYouTubeItem(it Item, outRoot string, cookies []*http.Cookie) (downloadResult, error) {
 	var res downloadResult
 	id := extractYouTubeID(it.VideoID)
 	if id == "" {
@@ -201,53 +344,15 @@ func downloadYouTubeItem(it Item, outRoot, cookieFile string) (downloadResult, e
 	if id == "" {
 		return res, fmt.Errorf("missing YouTube video ID")
 	}
-	videoURL := it.URL
-	if !isYouTubeURL(videoURL) {
-		videoURL = "https://www.youtube.com/watch?v=" + id
-	}
-	bin, err := ytdlpBinary()
+	player, err := fetchYouTubePlayer(id, cookies)
 	if err != nil {
 		return res, err
 	}
-	if err := os.MkdirAll(outRoot, 0o755); err != nil {
-		return res, err
-	}
-	toolDir, err := os.MkdirTemp(outRoot, ".yt-dlp-")
+	video, audio, combined, err := selectYouTubeStreams(player)
 	if err != nil {
 		return res, err
 	}
-	defer os.RemoveAll(toolDir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, youtubeArgs(videoURL, toolDir, cookieFile)...)
-	sink := &lineSink{maxLines: 20, onLine: func(line string) {
-		if f, ok := parseYouTubeProgress(line); ok {
-			emitProgress(f)
-		}
-	}}
-	cmd.Stdout = sink
-	cmd.Stderr = sink
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(sink.lastLines())
-		if detail == "" {
-			return res, fmt.Errorf("yt-dlp: %w", err)
-		}
-		return res, fmt.Errorf("yt-dlp: %w: %s", err, truncate(detail, 500))
-	}
-
-	videos, _ := filepath.Glob(filepath.Join(toolDir, "*.mp4"))
-	if len(videos) == 0 {
-		return res, fmt.Errorf("yt-dlp produced no mp4 file")
-	}
-	video := videos[0]
-	var videoSize int64
-	for _, candidate := range videos {
-		if st, err := os.Stat(candidate); err == nil && st.Size() > videoSize {
-			video, videoSize = candidate, st.Size()
-		}
-	}
-	info := loadYouTubeInfo(toolDir)
 	if it.VideoID == "" {
 		it.VideoID = id
 	}
@@ -255,18 +360,31 @@ func downloadYouTubeItem(it Item, outRoot, cookieFile string) (downloadResult, e
 		it.AwemeID = id
 	}
 	if it.Desc == "" {
-		it.Desc = info.Title
+		it.Desc = player.VideoDetails.Title
 	}
 	if it.Author == "" {
-		it.Author = info.Uploader
+		it.Author = player.VideoDetails.Author
 	}
 	if it.Author == "" {
-		it.Author = info.Channel
+		it.Author = player.VideoDetails.ChannelID
 	}
 	if it.CoverURL == "" {
-		it.CoverURL = info.Thumbnail
+		it.CoverURL = youtubeThumbnail(player)
 	}
-	res.Quality = youtubeQuality(info)
+	if it.DurationMS == 0 {
+		if seconds, err := strconv.Atoi(player.VideoDetails.LengthSeconds); err == nil {
+			it.DurationMS = seconds * 1000
+		}
+	}
+	if it.CreateTime == 0 {
+		if ts, err := time.Parse(time.RFC3339, player.Microformat.PlayerMicroformatRenderer.PublishDate); err == nil {
+			it.CreateTime = ts.Unix()
+		}
+	}
+	res.Quality = fmt.Sprintf("%dp", video.Height)
+	if codec := youtubeCodec(video.MimeType); codec != "" {
+		res.Quality += " " + codec
+	}
 
 	author := it.Author
 	if author == "" {
@@ -280,9 +398,31 @@ func downloadYouTubeItem(it Item, outRoot, cookieFile string) (downloadResult, e
 	res.Video = filepath.Join(dir, base+".mp4")
 	res.Cover = filepath.Join(dir, base+".jpg")
 	res.Meta = filepath.Join(dir, base+".json")
-	if err := os.Rename(video, res.Video); err != nil {
-		return res, err
+
+	client := youtubeHTTPClient(cookies)
+	dlClient := &http.Client{Jar: client.Jar}
+	referer := "https://www.youtube.com/"
+	if combined {
+		if _, err := downloadFile(video.URL, res.Video, referer, dlClient, progressRange{0, 0.97}); err != nil {
+			return res, fmt.Errorf("YouTube video: %w", err)
+		}
+	} else {
+		videoTmp := res.Video + ".video"
+		audioTmp := res.Video + ".audio"
+		defer os.Remove(videoTmp)
+		defer os.Remove(audioTmp)
+		if _, err := downloadFile(video.URL, videoTmp, referer, dlClient, progressRange{0, 0.85}); err != nil {
+			return res, fmt.Errorf("YouTube video: %w", err)
+		}
+		if _, err := downloadFile(audio.URL, audioTmp, referer, dlClient, progressRange{0.85, 0.10}); err != nil {
+			return res, fmt.Errorf("YouTube audio: %w", err)
+		}
+		emitProgress(0.97)
+		if err := mergeAV(videoTmp, audioTmp, res.Video); err != nil {
+			return res, fmt.Errorf("ffmpeg merge: %w", err)
+		}
 	}
+	emitProgress(1.0)
 	st, err := os.Stat(res.Video)
 	if err != nil {
 		return res, err
@@ -290,7 +430,7 @@ func downloadYouTubeItem(it Item, outRoot, cookieFile string) (downloadResult, e
 	res.Bytes = st.Size()
 
 	if it.CoverURL != "" {
-		if _, err := downloadFile(it.CoverURL, res.Cover, "", nil); err != nil {
+		if _, err := downloadFile(it.CoverURL, res.Cover, "", client); err != nil {
 			fmt.Printf("  warning: cover download failed: %v\n", err)
 			res.Cover = ""
 		}

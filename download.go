@@ -45,7 +45,6 @@ func runDownload(args []string) int {
 			return 2
 		}
 		sessionCookies = cks
-		youtubeCookieFile = o.cookies
 	}
 	tl, err := loadTimeline(pos[0])
 	if err != nil {
@@ -228,7 +227,7 @@ func downloadItem(it Item, platform, outRoot string, client *http.Client) (downl
 		return downloadBilibiliItem(it, outRoot, sessionCookies)
 	}
 	if platform == platformYouTube {
-		return downloadYouTubeItem(it, outRoot, youtubeCookieFile)
+		return downloadYouTubeItem(it, outRoot, sessionCookies)
 	}
 	var res downloadResult
 	res.Quality = it.Quality

@@ -9,7 +9,7 @@ English | [Chinese (Simplified)](README.zh-CN.md)
 Downloads videos from Douyin, TikTok, Bilibili and YouTube from a
 platform-neutral JSON timeline — self-contained, one static binary, standard
 library only (there is not a single `require` in `go.mod`). YouTube extraction
-is delegated to the external `yt-dlp` tool.
+is built in and currently capped at 1080p.
 
 ## Supported platforms
 
@@ -18,7 +18,7 @@ is delegated to the external `yt-dlp` tool.
 | <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="Douyin">&nbsp;Douyin | Creator videos | No (needs a browser signature) | Yes |
 | <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | Videos | Yes (`get`) | Yes |
 | <img src="docs/assets/bilibili.png" width="18" height="18" align="absmiddle" alt="Bilibili">&nbsp;Bilibili | Videos and pages | Yes (`get`) | Yes (DASH + ffmpeg) |
-| <img src="docs/assets/youtube.png" width="18" height="18" align="absmiddle" alt="YouTube">&nbsp;YouTube | Videos | Yes (`get`) | Yes (yt-dlp + ffmpeg) |
+| <img src="docs/assets/youtube.png" width="18" height="18" align="absmiddle" alt="YouTube">&nbsp;YouTube | Videos | Yes (`get`) | Yes (native + ffmpeg) |
 
 ## Features
 
@@ -77,11 +77,11 @@ platform. Mixed-platform timelines are supported when each item carries
 ## Requirements
 
 - Go 1.27+ to build.
-- `ffmpeg` on `PATH` for Bilibili downloads (DASH audio and video are merged).
-- `yt-dlp` on `PATH` (or `YT_DLP_BIN`) for YouTube downloads.
+- `ffmpeg` on `PATH` for Bilibili and YouTube downloads (DASH audio and video
+  are merged).
 - Optional cookies for higher quality: TikTok may serve 720p anonymously and
   1080p with a logged-in session; Bilibili unlocks 1080p+ with `SESSDATA`.
-  For YouTube, `--cookies` is forwarded to yt-dlp (Netscape format).
+  For YouTube, `--cookies` is used by the built-in extractor.
 
 ## Quick start
 
@@ -125,7 +125,7 @@ vidpuller download '<bilibili-timeline-url>' -n 3 \
 # One Bilibili video (BV ID or full URL; ?p=N selects a page)
 vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
 
-# One YouTube video (requires yt-dlp)
+# One YouTube video (native extractor, up to 1080p)
 vidpuller get 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
 
@@ -175,10 +175,10 @@ only kept for reference.
 - **Bilibili**: `view` provides the cid, `playurl` provides DASH streams, and
   `ffmpeg -c copy` merges them. A mirror host is tried first for Akamai URLs,
   with the original CDN as fallback.
-- **YouTube**: delegated to `yt-dlp`, which handles signature and JavaScript
-  extraction; the Go side controls the output layout and progress. The default
-  format selector is `bv*+ba/b`; set `YT_DLP_FORMAT` to override it, for
-  example `wv*+wa/w` for the smallest file.
+- **YouTube**: a native InnerTube extractor requests the player response with
+  the VISIONOS client, which exposes direct adaptive stream URLs without a
+  signature cipher. The highest video up to 1080p is preferred (AVC/MP4
+  first), matched with the best MP4 audio, and merged by `ffmpeg -c copy`.
 
 ## Limitations
 
@@ -187,9 +187,10 @@ only kept for reference.
   stream. Use `download --ids <video_id>` instead.
 - TikTok image posts have no `play_url` and are skipped (the cover can still be
   fetched from the timeline).
-- **YouTube** requires `yt-dlp`; age-restricted, DRM-protected or
-  region-blocked videos may need cookies or may not be downloadable. Playlists
-  and channel feeds are not expanded; pass single video URLs.
+- **YouTube** currently selects up to 1080p; 1440p/2160p are not selected yet.
+  Age-restricted, DRM-protected or region-blocked videos may need cookies or
+  may not be downloadable. Playlists and channel feeds are not expanded; pass
+  single video URLs.
 - Private or region-restricted content is reported as an error by the platform;
   the tool cannot see what the timeline data does not include.
 - Timeline collection, signing and login state are the caller's

@@ -41,8 +41,7 @@ download options:
       --interval DUR   delay between items (default 3s)
       --platform NAME  override platform detection (douyin|tiktok|bilibili|youtube)
       --cookies FILE   login cookies (Netscape / JSON / "k=v; k=v"); raises
-                       TikTok quality, unlocks Bilibili 1080p+, and is
-                       forwarded to yt-dlp for YouTube
+                       TikTok quality and unlocks Bilibili 1080p+
       --progress       write progress lines to stderr (PROGRESS <0-100>)
 
 get options:
@@ -57,7 +56,7 @@ Douyin single-video URLs are not supported: the detail endpoint requires a
 browser signature and pure HTTP cannot obtain a watermark-free stream. Use
 download + --ids, or put the item in a timeline JSON.
 
-YouTube downloads require yt-dlp on PATH, or YT_DLP_BIN pointing at it.
+YouTube downloads use the built-in InnerTube extractor (up to 1080p).
 
 Output: <out>/<platform>/<author>/<video_id>_<title>.mp4 + .jpg + .json
 State:  <out>/.state.json (dedup key: platform:id)

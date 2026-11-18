@@ -117,7 +117,6 @@ func runGet(args []string) int {
 			return 2
 		}
 		sessionCookies = cks
-		youtubeCookieFile = o.cookies
 	}
 	target := pos[0]
 	if bvid, part := extractBVID(target); bvid != "" {
@@ -167,7 +166,7 @@ func runGet(args []string) int {
 			}
 		}
 		fmt.Printf("[youtube] %s\n", it.AwemeID)
-		res, err := downloadYouTubeItem(it, o.out, youtubeCookieFile)
+		res, err := downloadYouTubeItem(it, o.out, sessionCookies)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "download failed:", err)
 			return 1

@@ -8,7 +8,7 @@
 
 从抖音、TikTok、B 站和 YouTube 下载视频，输入是一份平台无关的 JSON 时间线 ——
 自包含、单个静态二进制、只用标准库（`go.mod` 里没有任何 `require`）。YouTube
-的解析委托给外部 `yt-dlp`。
+解析为内置实现，目前最高支持 1080p。
 
 ## 支持的平台
 
@@ -17,7 +17,7 @@
 | <img src="docs/assets/douyin.png" width="18" height="18" align="absmiddle" alt="抖音">&nbsp;抖音 | 创作者视频 | 不支持（需要浏览器签名） | 支持 |
 | <img src="docs/assets/tiktok.png" width="18" height="18" align="absmiddle" alt="TikTok">&nbsp;TikTok | 视频 | 支持（`get`） | 支持 |
 | <img src="docs/assets/bilibili.png" width="18" height="18" align="absmiddle" alt="哔哩哔哩">&nbsp;B 站 | 视频与分 P | 支持（`get`） | 支持（DASH + ffmpeg） |
-| <img src="docs/assets/youtube.png" width="18" height="18" align="absmiddle" alt="YouTube">&nbsp;YouTube | 视频 | 支持（`get`） | 支持（yt-dlp + ffmpeg） |
+| <img src="docs/assets/youtube.png" width="18" height="18" align="absmiddle" alt="YouTube">&nbsp;YouTube | 视频 | 支持（`get`） | 支持（内置 + ffmpeg） |
 
 ## 特性
 
@@ -70,11 +70,9 @@ BV 号或 B 站视频页地址 > YouTube 地址 > 时间线 URL > 媒体直链�
 ## 前置
 
 - 构建需要 Go 1.27+。
-- B 站下载需要系统里有 `ffmpeg`（DASH 音视频流要合并）。
-- YouTube 下载需要系统里有 `yt-dlp`（或设置 `YT_DLP_BIN`）。
+- B 站和 YouTube 下载需要系统里有 `ffmpeg`（DASH 音视频流要合并）。
 - 可选 cookie 提升画质：TikTok 未登录可能只有 720p，登录后可到 1080p；
-  B 站带 `SESSDATA` 可解锁 1080p+；YouTube 的 `--cookies` 会透传给 yt-dlp
-  （Netscape 格式）。
+  B 站带 `SESSDATA` 可解锁 1080p+；YouTube 的 `--cookies` 由内置解析器使用。
 
 ## 快速开始
 
@@ -118,7 +116,7 @@ vidpuller download '<bilibili-timeline-url>' -n 3 \
 # 单条 B 站（BV 号或完整链接，?p=N 指定分 P）
 vidpuller get 'https://www.bilibili.com/video/BV1xxxxxxxxx'
 
-# 单条 YouTube（需要 yt-dlp）
+# 单条 YouTube（内置解析器，最高 1080p）
 vidpuller get 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
 
@@ -162,17 +160,18 @@ downloads/
   （如 `1080p bytevc1 722kbps`）。
 - **B 站**：`view` 取 cid，`playurl` 取 DASH 流，`ffmpeg -c copy` 合并；Akamai
   地址优先走镜像，失败时回退原始 CDN。
-- **YouTube**：委托给 `yt-dlp` 处理签名与 JavaScript 解析，Go 侧负责输出布局和
-  进度。默认格式选择器为 `bv*+ba/b`；可用 `YT_DLP_FORMAT` 覆盖，例如
-  `wv*+wa/w` 取最小文件。
+- **YouTube**：内置 InnerTube 解析器，使用 VISIONOS 客户端请求播放器响应，
+  该客户端返回不带签名加密的直链。优先选 1080p 以内最高画质（AVC/MP4 优先），
+  搭配最佳 MP4 音频，再用 `ffmpeg -c copy` 合并。
 
 ## 已知限制
 
 - **抖音单条链接不支持**：详情接口需要浏览器签名（`a_bogus`），纯 HTTP 拿不到
   无水印直链；要下某一条，用 `download --ids <video_id>`。
 - TikTok 图文帖没有 `play_url`，会被跳过（封面仍可从时间线获取）。
-- **YouTube** 依赖 `yt-dlp`；年龄限制、DRM 或地区限制的视频可能需要 cookie，
-  也可能无法下载。不展开播放列表或频道时间线，只接受单条视频地址。
+- **YouTube** 目前最高选择 1080p，暂不选 1440p/2160p。年龄限制、DRM 或地区限制
+  的视频可能需要 cookie，也可能无法下载。不展开播放列表或频道时间线，只接受
+  单条视频地址。
 - 私密或地区限制内容由平台报错；时间线里没有的条目，本工具也看不到。
 - 时间线的抓取、签名与登录态由调用方负责，本工具只消费 JSON。
 
