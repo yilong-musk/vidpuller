@@ -249,7 +249,7 @@ func downloadItem(it Item, platform, outRoot string, client *http.Client) (downl
 	res.Bytes = n
 
 	if it.CoverURL != "" {
-		if _, err := downloadFile(it.CoverURL, res.Cover, refererFor(platform), client); err != nil {
+		if _, err := downloadFile(it.CoverURL, res.Cover, refererFor(platform), client, progressRange{silent: true}); err != nil {
 			fmt.Printf("  warning: cover download failed: %v\n", err)
 			res.Cover = ""
 		}
@@ -303,21 +303,27 @@ func emitProgress(f float64) {
 }
 
 // progressRange maps one file's 0..1 progress onto a slice of the total
-// progress (Bilibili downloads video and audio separately).
-type progressRange struct{ base, span float64 }
+// progress (Bilibili downloads video and audio separately). A silent range
+// emits nothing: auxiliary downloads (covers) must not rewind the bar after
+// the media is already complete.
+type progressRange struct {
+	base, span float64
+	silent     bool
+}
 
 type progressWriter struct {
-	w     io.Writer
-	total int64
-	done  int64
-	base  float64
-	span  float64
+	w      io.Writer
+	total  int64
+	done   int64
+	base   float64
+	span   float64
+	silent bool
 }
 
 func (p *progressWriter) Write(b []byte) (int, error) {
 	n, err := p.w.Write(b)
 	p.done += int64(n)
-	if p.total > 0 {
+	if p.total > 0 && !p.silent {
 		emitProgress(p.base + float64(p.done)/float64(p.total)*p.span)
 	}
 	return n, err
@@ -367,7 +373,10 @@ func downloadFile(url, dest, referer string, client *http.Client, rng ...progres
 	if len(rng) > 0 {
 		r = rng[0]
 	}
-	pw := &progressWriter{w: f, total: resp.ContentLength, base: r.base, span: r.span}
+	pw := &progressWriter{
+		w: f, total: resp.ContentLength,
+		base: r.base, span: r.span, silent: r.silent,
+	}
 	n, copyErr := io.Copy(pw, resp.Body)
 	closeErr := f.Close()
 	if copyErr != nil {
