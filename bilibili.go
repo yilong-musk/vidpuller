@@ -446,15 +446,15 @@ func downloadBilibiliItem(it Item, outRoot string, cookies []*http.Cookie) (down
 	// Large downloads are not bound by the API's 60s timeout: use a client
 	// without Timeout; downloadFile has its own 30-minute context.
 	dlClient := &http.Client{Jar: client.Jar}
-	if _, err := downloadFile(biliFastURL(det.PlayURL), videoTmp, biliReferer, dlClient, progressRange{0, 0.90}); err != nil {
+	if _, err := downloadFile(biliFastURL(det.PlayURL), videoTmp, biliReferer, dlClient, progressRange{base: 0, span: 0.90}); err != nil {
 		// Fall back to the original CDN when the mirror is unavailable.
-		if _, err2 := downloadFile(det.PlayURL, videoTmp+".retry", biliReferer, dlClient, progressRange{0, 0.90}); err2 == nil {
+		if _, err2 := downloadFile(det.PlayURL, videoTmp+".retry", biliReferer, dlClient, progressRange{base: 0, span: 0.90}); err2 == nil {
 			os.Rename(videoTmp+".retry", videoTmp)
 		} else {
 			return res, fmt.Errorf("video stream: %w (fallback also failed: %v)", err, err2)
 		}
 	}
-	if _, err := downloadFile(det.AudioURL, audioTmp, biliReferer, dlClient, progressRange{0.90, 0.07}); err != nil {
+	if _, err := downloadFile(det.AudioURL, audioTmp, biliReferer, dlClient, progressRange{base: 0.90, span: 0.07}); err != nil {
 		return res, fmt.Errorf("audio stream: %w", err)
 	}
 	emitProgress(0.97)
@@ -470,7 +470,7 @@ func downloadBilibiliItem(it Item, outRoot string, cookies []*http.Cookie) (down
 	emitProgress(1.0)
 
 	if it.CoverURL != "" {
-		if _, err := downloadFile(it.CoverURL, res.Cover, biliReferer, dlClient); err != nil {
+		if _, err := downloadFile(it.CoverURL, res.Cover, biliReferer, dlClient, progressRange{silent: true}); err != nil {
 			fmt.Printf("  warning: cover download failed: %v\n", err)
 			res.Cover = ""
 		}

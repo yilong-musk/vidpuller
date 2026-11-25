@@ -408,7 +408,7 @@ func downloadYouTubeItem(it Item, outRoot string, cookies []*http.Cookie) (downl
 	dlClient := &http.Client{Jar: client.Jar}
 	referer := "https://www.youtube.com/"
 	if combined {
-		if _, err := downloadFile(video.URL, res.Video, referer, dlClient, progressRange{0, 0.97}); err != nil {
+		if _, err := downloadFile(video.URL, res.Video, referer, dlClient, progressRange{base: 0, span: 0.97}); err != nil {
 			return res, fmt.Errorf("YouTube video: %w", err)
 		}
 	} else {
@@ -416,10 +416,10 @@ func downloadYouTubeItem(it Item, outRoot string, cookies []*http.Cookie) (downl
 		audioTmp := res.Video + ".audio"
 		defer os.Remove(videoTmp)
 		defer os.Remove(audioTmp)
-		if _, err := downloadFile(video.URL, videoTmp, referer, dlClient, progressRange{0, 0.85}); err != nil {
+		if _, err := downloadFile(video.URL, videoTmp, referer, dlClient, progressRange{base: 0, span: 0.85}); err != nil {
 			return res, fmt.Errorf("YouTube video: %w", err)
 		}
-		if _, err := downloadFile(audio.URL, audioTmp, referer, dlClient, progressRange{0.85, 0.10}); err != nil {
+		if _, err := downloadFile(audio.URL, audioTmp, referer, dlClient, progressRange{base: 0.85, span: 0.10}); err != nil {
 			return res, fmt.Errorf("YouTube audio: %w", err)
 		}
 		emitProgress(0.97)
@@ -435,7 +435,7 @@ func downloadYouTubeItem(it Item, outRoot string, cookies []*http.Cookie) (downl
 	res.Bytes = st.Size()
 
 	if it.CoverURL != "" {
-		if _, err := downloadFile(it.CoverURL, res.Cover, "", client); err != nil {
+		if _, err := downloadFile(it.CoverURL, res.Cover, "", client, progressRange{silent: true}); err != nil {
 			fmt.Printf("  warning: cover download failed: %v\n", err)
 			res.Cover = ""
 		}
