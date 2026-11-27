@@ -4,7 +4,7 @@
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md) | [Français](README.fr.md) | [Deutsch](README.de.md) | Português | [Русский](README.ru.md)
+[Deutsch](README.de.md) | [English](README.md) | [Español](README.es.md) | [Français](README.fr.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | Português | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
 Descarrega vídeos do Douyin, TikTok, Bilibili e YouTube a partir de uma cronologia JSON neutra quanto à plataforma — autónomo, um único binário estático, só a biblioteca padrão (não há um único `require` no `go.mod`). A extração do YouTube é integrada; o teto por omissão é 1080p e `--max-height` sobe-o para 1440p ou 2160p.
 
