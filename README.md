@@ -4,7 +4,7 @@
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-English | [Chinese (Simplified)](README.zh-CN.md)
+English | [Chinese (Simplified)](README.zh-CN.md) | [Chinese (Traditional)](README.zh-TW.md) | [Japanese](README.ja.md) | [Korean](README.ko.md) | [Spanish](README.es.md) | [French](README.fr.md) | [German](README.de.md) | [Portuguese](README.pt.md) | [Russian](README.ru.md)
 
 Downloads videos from Douyin, TikTok, Bilibili and YouTube from a
 platform-neutral JSON timeline — self-contained, one static binary, standard
@@ -229,8 +229,10 @@ only kept for reference.
 
 ## Documentation
 
-- **[Chinese (Simplified)](README.zh-CN.md)**: this README in Simplified
-  Chinese; the English page remains the source of truth.
+- **Translations** (`README.zh-CN.md`, `README.zh-TW.md`, `README.ja.md`,
+  `README.ko.md`, `README.es.md`, `README.fr.md`, `README.de.md`,
+  `README.pt.md`, `README.ru.md`): localized copies of this page; the English
+  page remains the source of truth.
 - **[AGENTS.md](AGENTS.md)**: repository constraints, including the
   English-only rule and the merge policy.
 
